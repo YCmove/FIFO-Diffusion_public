@@ -30,6 +30,8 @@ from lvdm.common import (
     default
 )
 
+import open_clip
+
 
 __conditioning_keys__ = {'concat': 'c_concat',
                          'crossattn': 'c_crossattn',
@@ -442,12 +444,21 @@ class LatentDiffusion(DDPM):
             model = instantiate_from_config(config)
             self.cond_stage_model = model
     
+    ## Never delete this func: it is used in log_images() and inference stage
+    def get_image_embeds(self, batch_imgs):
+        ## img: b c h w
+        img_token = self.embedder(batch_imgs)
+        img_emb = self.image_proj_model(img_token)
+        return img_emb
+
     def get_learned_conditioning(self, c):
         if self.cond_stage_forward is None:
             if hasattr(self.cond_stage_model, 'encode') and callable(self.cond_stage_model.encode):
+                # tokens = open_clip.tokenize(c)
                 c = self.cond_stage_model.encode(c)
                 if isinstance(c, DiagonalGaussianDistribution):
                     c = c.mode()
+
             else:
                 c = self.cond_stage_model(c)
         else:
@@ -519,6 +530,8 @@ class LatentDiffusion(DDPM):
             key = 'c_concat' if self.model.conditioning_key == 'concat' else 'c_crossattn'
             cond = {key: cond}
 
+        # round 1: cond['c_crossattn'][0].shape = (1,93,1024)
+        # round 2: cond['c_crossattn'][0].shape = (1,77,1024)
         x_recon = self.model(x_noisy, t, **cond, **kwargs)
 
         if isinstance(x_recon, tuple):
@@ -709,6 +722,7 @@ class DiffusionWrapper(pl.LightningModule):
             out = self.diffusion_model(xc, t, **kwargs)
         elif self.conditioning_key == 'crossattn':
             cc = torch.cat(c_crossattn, 1)
+            # cc.shape = (1,93,1024)
             out = self.diffusion_model(x, t, context=cc, **kwargs)
         elif self.conditioning_key == 'hybrid':
             ## it is just right [b,c,t,h,w]: concatenate in channel dim

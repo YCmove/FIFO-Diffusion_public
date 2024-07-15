@@ -190,6 +190,8 @@ class DDIMSampler(object):
         b, _, f, _, _ = shape
 
         ts = torch.Tensor(timesteps.copy()).to(device=device, dtype=torch.long) # [16]
+        # round 1: cond['c_crossattn'][0].shape=(1,83,1024)
+        # round 1: unconditional_conditioning.shape=(1,77,1024)
         noise_pred = self.unet(latents, cond, ts,
                                 unconditional_guidance_scale=unconditional_guidance_scale,
                                 unconditional_conditioning=unconditional_conditioning,
@@ -284,6 +286,7 @@ class DDIMSampler(object):
     def unet(self, x, c, t, unconditional_guidance_scale=1.,
              unconditional_conditioning=None, **kwargs):
         
+        # round 1: c['c_crossattn'][0].shape=(1,83,1024)
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
             e_t = self.model.apply_model(x, t, c, **kwargs) # unet denoiser
         else:

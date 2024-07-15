@@ -1,3 +1,5 @@
+import cv2
+import numpy as np
 from functools import partial
 from abc import abstractmethod
 import torch
@@ -33,19 +35,25 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
     support it as an extra input.
     """
 
-    def forward(self, x, emb, context=None, batch_size=None):
+    def forward(self, x, emb, context=None, batch_size=None, caches=None):
+        q1 = None
+        q2 = None
         for layer in self:
             if isinstance(layer, TimestepBlock):
+                # ResBlock, convolutional layers
+                # print(f'[Conv] in TimestepEmbedSequential')
                 x = layer(x, emb, batch_size)
             elif isinstance(layer, SpatialTransformer):
-                x = layer(x, context)
+                # print(f'[SpatialTransformer] in TimestepEmbedSequential')
+                x = layer(x, context, caches)
             elif isinstance(layer, TemporalTransformer):
+                # print(f'[TemporalTransformer] in TimestepEmbedSequential')
                 x = rearrange(x, '(b f) c h w -> b c f h w', b=batch_size)
-                x = layer(x, context)
+                x, q1, q2 = layer(x, context, caches)
                 x = rearrange(x, 'b c f h w -> (b f) c h w')
             else:
                 x = layer(x,)
-        return x
+        return x, q1, q2
 
 
 class Downsample(nn.Module):
@@ -531,9 +539,40 @@ class UNetModel(nn.Module):
             zero_module(conv_nd(dims, model_channels, out_channels, 3, padding=1)),
         )
 
+    def avg_and_thresholding(self, attn_list):
+        avg_attn = None
+        avg_attn_list = []
+
+        for i, attn in enumerate(attn_list):
+            if attn is None:
+                continue
+            avg_attn_list.append(attn)
+
+            attn = attn.mean(0).detach().cpu().numpy()
+
+            (T, threshInv) = cv2.threshold(np.uint8(attn*255),0,255,cv2.THRESH_OTSU)
+            threshInv = np.where(threshInv > 1, -np.inf, 0)
+            mask = torch.tensor(threshInv, dtype=torch.float32).to('cuda:0')
+        
+            attn_list[i] = mask
+
+        avg_attn = torch.cat(avg_attn_list, dim=0).mean(0).detach().cpu().numpy()
+
+        (T, threshInv) = cv2.threshold(np.uint8(avg_attn*255),0,255,cv2.THRESH_OTSU)
+
+        # threshInv = np.where(threshInv > 1, -np.inf, 0)
+        threshInv = np.where(threshInv > 1, -np.inf, 0)
+        mask_all = torch.tensor(threshInv, dtype=torch.float32).to('cuda:0')
+
+
+        return mask_all, attn_list
+
+
     def forward(self, x, timesteps, context=None, features_adapter=None, fps=16, **kwargs):
         is_fifo = x.shape[0] != timesteps.shape[0]
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
+
+        # round 1: context.shape=(1,93,1024)
         emb = self.time_embed(t_emb)
 
         if self.fps_cond:
@@ -545,6 +584,7 @@ class UNetModel(nn.Module):
         b,_,t,_,_ = x.shape
         ## repeat t times for context [(b t) 77 768] & time embedding
         context = context.repeat_interleave(repeats=t, dim=0)
+        # context.shape = (16.93,1024)
         if not is_fifo:
             emb = emb.repeat_interleave(repeats=t, dim=0)
 
@@ -554,22 +594,63 @@ class UNetModel(nn.Module):
         h = x.type(self.dtype)
         adapter_idx = 0
         hs = []
+        cache1 = []
+        cache2 = []
+        out2in = {
+            0: None,
+            1: None,
+            2: None,
+            3: 8,
+            4: 7,
+            5: 7,
+            6: 5,
+            7: 4,
+            8: 4,
+            9: 2,
+            10: 1,
+            11: 11
+        }
+        # len(self.input_blocks) = 12
         for id, module in enumerate(self.input_blocks):
-            h = module(h, emb, context=context, batch_size=b)
+            # round 1: context.shape = (16,93,1024)
+            # round 2: context.shape = (16,77,1024)
+            # print(f'----- input_blocks {id}-th {module.__class__.__name__}, h={h.shape} -----')
+            h, q1, q2 = module(h, emb, context=context, batch_size=b)
             if id ==0 and self.addition_attention:
-                h = self.init_attn(h, emb, context=context, batch_size=b)
+                h, q1, q2 = self.init_attn(h, emb, context=context, batch_size=b)
             ## plug-in adapter features
             if ((id+1)%3 == 0) and features_adapter is not None:
+                # never executed
                 h = h + features_adapter[adapter_idx]
                 adapter_idx += 1
+
+            # here
+            del q1, q2
+            # cache1.append(q1)
+            # cache2.append(q2)
             hs.append(h)
         if features_adapter is not None:
             assert len(features_adapter)==adapter_idx, 'Wrong features_adapter'
 
-        h = self.middle_block(h, emb, context=context, batch_size=b)
-        for module in self.output_blocks:
+        h, _, _ = self.middle_block(h, emb, context=context, batch_size=b)
+
+        # here
+        # mask1_all, mask1_list = self.avg_and_thresholding(cache1)
+        # mask2_all, mask2_list = self.avg_and_thresholding(cache2)
+
+        for idx, module in enumerate(self.output_blocks):
+            # print(f'----- output_blocks {idx}-th {module.__class__.__name__}, h={h.shape} -----')
+
             h = torch.cat([h, hs.pop()], dim=1)
-            h = module(h, emb, context=context, batch_size=b)
+
+            caches = None
+            # caches = ([1], [1])
+            # here
+            # if out2in[idx] is not None:
+            #     # q_cache = (cache1[out2in[idx]], cache2[out2in[idx]])
+            #     caches = (mask1_list[out2in[idx]], mask2_list[out2in[idx]])
+            #     # caches = (mask1_all, mask2_all)
+            h, q1, q2 = module(h, emb, context=context, batch_size=b, caches=caches)
         h = h.type(x.dtype)
         y = self.out(h)
         
@@ -577,3 +658,4 @@ class UNetModel(nn.Module):
         y = rearrange(y, '(b t) c h w -> b c t h w', b=b)
         return y
     
+

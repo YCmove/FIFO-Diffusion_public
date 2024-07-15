@@ -6,6 +6,7 @@ import cv2
 import torch
 import torchvision
 import imageio
+import matplotlib.pyplot as plt
 from tqdm import trange
 sys.path.insert(1, os.path.join(sys.path[0], '..', '..'))
 from lvdm.models.samplers.ddim import DDIMSampler
@@ -15,13 +16,17 @@ def prepare_latents(args, latents_dir, sampler):
     latents_list = []
 
     video = torch.load(latents_dir+f"/{args.num_inference_steps}.pt")
+
+    # dummy latents: latents_list: [0,..,7] with lower noise level
     if args.lookahead_denoising:
         for i in range(args.video_length // 2):
             alpha = sampler.ddim_alphas[0]
             beta = 1 - alpha
+            # latents(x_t) as a linear combination of x0 and a noise variable.
             latents = alpha**(0.5) * video[:,:,[0]] + beta**(0.5) * torch.randn_like(video[:,:,[0]])
             latents_list.append(latents)
 
+    # latents_list: [8,..,63] with increased noise level
     for i in range(args.num_inference_steps):
         alpha = sampler.ddim_alphas[i] # image -> noise
         beta = 1 - alpha
@@ -175,16 +180,30 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
                 print(f"Warning: Got {conditioning.shape[0]} conditionings but batch-size is {batch_size}")
     
     cond = conditioning
+    uncond_type = model.uncond_type
 
     ## construct unconditional guidance
     if cfg_scale != 1.0:
-        prompts = batch_size * [""]
-        #prompts = N * T * [""]  ## if is_imgbatch=True
-        uc_emb = model.get_learned_conditioning(prompts)
+        if uncond_type == "empty_seq":
+            prompts = batch_size * [""]
+            #prompts = N * T * [""]  ## if is_imgbatch=True
+            uc_emb = model.get_learned_conditioning(prompts)
+            
+        elif uncond_type == "zero_embed":
+            c_emb = cond["c_crossattn"][0] if isinstance(cond, dict) else cond
+            uc_emb = torch.zeros_like(c_emb)
+
+        ## process image embedding token
+        if hasattr(model, 'embedder'):
+            uc_img = torch.zeros(noise_shape[0],3,224,224).to(model.device)
+            ## img: b c h w >> b l c
+            uc_img = model.get_image_embeds(uc_img)
+            uc_emb = torch.cat([uc_emb, uc_img], dim=1)
         
-        uc = {key:cond[key] for key in cond.keys()}
-        uc.update({'c_crossattn': [uc_emb]})
-        
+        if isinstance(cond, dict):
+            uc = {key:cond[key] for key in cond.keys()}
+            uc.update({'c_crossattn': [uc_emb]})
+
     else:
         uc = None
     
@@ -233,10 +252,20 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
         # reconstruct from latent to pixel space
         first_frame_idx = args.video_length // 2 if args.lookahead_denoising else 0
         frame_tensor = model.decode_first_stage_2DAE(latents[:,:,[first_frame_idx]]) # b,c,1,H,W
-        image = tensor2image(frame_tensor)
+
         if save_frames:
-            fifo_path = os.path.join(fifo_dir, f"{i}.png")
-            image.save(fifo_path)
+            for j in range(args.video_length):
+                frame_tensor_tmp = model.decode_first_stage_2DAE(latents[:,:,[j]])
+                image_tmp = tensor2image(frame_tensor_tmp)
+                fifo_path_tmp = os.path.join(fifo_dir, f"{i}_{j}.png")
+                image_tmp.save(fifo_path_tmp)
+
+        image = tensor2image(frame_tensor)
+        # plt.imshow(image)
+        # plt.show()
+        # if save_frames:
+        #     fifo_path = os.path.join(fifo_dir, f"{i}.png")
+        #     image.save(fifo_path)
         fifo_video_frames.append(image)
             
         latents = shift_latents(latents)
@@ -384,6 +413,18 @@ def load_prompts(prompt_file):
             prompt_list.append(l)
         f.close()
     return prompt_list
+
+def load_i2v_prompts(prompt_file):
+    img_list = []
+    prompt_list = []
+    with open(prompt_file, 'r') as f:
+        for idx, line in enumerate(f.readlines()):
+            l = line.strip()
+            img_path, prompt = l.split(';')
+            if len(l) != 0:
+                img_list.append(img_path)
+                prompt_list.append(prompt)
+    return img_list, prompt_list
 
 
 def load_video_batch(filepath_list, frame_stride, video_size=(256,256), video_frames=16):

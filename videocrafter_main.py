@@ -5,10 +5,12 @@ import torch
 import numpy as np
 from PIL import Image
 import imageio
-
 from pytorch_lightning import seed_everything
 
-from scripts.evaluation.funcs import load_model_checkpoint, load_prompts, load_image_batch, get_filelist, save_gif
+import warnings
+warnings.filterwarnings("ignore")
+
+from scripts.evaluation.funcs import load_model_checkpoint, load_prompts, load_i2v_prompts, load_image_batch, get_filelist, save_gif
 from scripts.evaluation.funcs import base_ddim_sampling, fifo_ddim_sampling
 from utils.utils import instantiate_from_config
 from lvdm.models.samplers.ddim import DDIMSampler
@@ -24,6 +26,8 @@ def set_directory(args, prompt):
             output_dir += f"/{args.new_video_length}frames"
         if not args.lookahead_denoising:
             output_dir = output_dir.replace(f"{prompt[:100]}", f"{prompt[:100]}/no_lookahead_denoising")
+        if args.experiment is not None:
+            output_dir = output_dir.replace(f"{prompt[:100]}", f"{prompt[:100]}/{args.experiment}")
         if args.num_partitions != 4:
             output_dir = output_dir.replace(f"{prompt[:100]}", f"{prompt[:100]}/n={args.num_partitions}")
         if args.video_length != 16:
@@ -60,11 +64,18 @@ def main(args):
     h, w = args.height // 8, args.width // 8
     frames = args.video_length
     channels = model.channels
+    mode =args.mode
 
     ## step 2: load data
     ## -----------------------------------------------------------------
     assert os.path.exists(args.prompt_file), "Error: prompt file NOT Found!"
-    prompt_list = load_prompts(args.prompt_file)
+
+    if mode == 't2v':
+        prompt_list = load_prompts(args.prompt_file)
+    else:
+        assert mode == 'i2v'
+        img_list, prompt_list = load_i2v_prompts(args.prompt_file)
+
     num_samples = len(prompt_list)
 
     indices = list(range(num_samples))
@@ -83,7 +94,18 @@ def main(args):
         prompts = [prompt]
         text_emb = model.get_learned_conditioning(prompts)
 
-        cond = {"c_crossattn": [text_emb], "fps": fps}
+        if mode == 't2v':
+            cond = {"c_crossattn": [text_emb], "fps": fps}
+        else:
+            assert mode == 'i2v'
+            ########### i2v ###########
+            img_path = img_list[idx]
+            cond_images = load_image_batch([img_path], (args.height, args.width))
+            cond_images = cond_images.to(model.device)
+            img_emb = model.get_image_embeds(cond_images)
+            imtext_cond = torch.cat([text_emb, img_emb], dim=1)
+            cond = {"c_crossattn": [imtext_cond], "fps": fps}
+            ############################
 
         ## inference
         is_run_base = not (os.path.exists(latents_dir+f"/{args.num_inference_steps}.pt") and os.path.exists(latents_dir+f"/0.pt"))
@@ -100,7 +122,12 @@ def main(args):
             args, model, cond, noise_shape, ddim_sampler, args.unconditional_guidance_scale, output_dir=output_dir, latents_dir=latents_dir, save_frames=args.save_frames
         )
         if args.output_dir is None:
-            output_path = output_dir+"/fifo"
+            frames_dirname = None
+            if args.experiment is None:
+                frames_dirname = 'fifo'
+            else:
+                frames_dirname = args.experiment
+            output_path = output_dir+f"/{frames_dirname}"
         else:
             output_path = output_dir+f"/{prompt[:100]}"
 
@@ -116,9 +143,12 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default="configs/inference_t2v_512_v2.0.yaml", help="config (yaml) path")
     parser.add_argument("--seed", type=int, default=321)
     parser.add_argument("--video_length", type=int, default=16, help="f in paper")
+    # num_partitions(n) * video_length(f) = 4 * 16 = 64 = num_inference_steps
     parser.add_argument("--num_partitions", "-n", type=int, default=4, help="n in paper")
+    # num_inference_steps should be 64, will be overwritten later
     parser.add_argument("--num_inference_steps", type=int, default=16, help="number of inference steps, it will be f * n forcedly")
     parser.add_argument("--prompt_file", "-p", type=str, default="prompts/test_prompts.txt", help="path to the prompt file")
+    parser.add_argument("--mode", "-m", type=str, default="t2v", help="t2v or i2v")
     parser.add_argument("--new_video_length", "-l", type=int, default=100, help="N in paper; desired length of the output video")
     parser.add_argument("--num_processes", type=int, default=1, help="number of processes if you want to run only the subset of the prompts")
     parser.add_argument("--rank", type=int, default=0, help="rank of the process(0~num_processes-1)")
@@ -128,6 +158,7 @@ if __name__ == "__main__":
     parser.add_argument("--fps", type=int, default=8)
     parser.add_argument("--unconditional_guidance_scale", type=float, default=12.0, help="prompt classifier-free guidance")
     parser.add_argument("--lookahead_denoising", "-ld", action="store_false", default=True)
+    parser.add_argument("--experiment", "-ex", action='store', type=str, default=None)
     parser.add_argument("--eta", "-e", type=float, default=1.0)
     parser.add_argument("--output_dir", type=str, default=None, help="custom output directory")
     parser.add_argument("--use_mp4", action="store_true", default=False, help="use mp4 format for the output video")
@@ -135,6 +166,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # 64 = 16 * 4
     args.num_inference_steps = args.video_length * args.num_partitions
 
     seed_everything(args.seed)
