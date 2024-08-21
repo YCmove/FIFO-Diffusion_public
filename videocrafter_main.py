@@ -134,7 +134,7 @@ def main(args):
         if args.use_mp4:
             imageio.mimsave(output_path+".mp4", video_frames[-args.new_video_length:], fps=args.output_fps)
         else:
-            imageio.mimsave(output_path+".gif", video_frames[-args.new_video_length:], duration=int(1000/args.output_fps)) 
+            imageio.mimsave(output_path+".gif", video_frames[-args.new_video_length:], duration=int(1000/args.output_fps), loop=0) 
 
 
 if __name__ == "__main__":
