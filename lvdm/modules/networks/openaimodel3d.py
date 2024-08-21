@@ -17,6 +17,10 @@ from lvdm.basics import (
 )
 from lvdm.modules.attention import SpatialTransformer, TemporalTransformer
 
+import cv2
+import numpy as np
+from matplotlib import pyplot as plt
+import torch.nn.functional as F
 
 class TimestepBlock(nn.Module):
     """
@@ -45,8 +49,9 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
                 x = layer(x, emb, batch_size)
             elif isinstance(layer, SpatialTransformer):
                 # print(f'[SpatialTransformer] in TimestepEmbedSequential')
-                x = layer(x, context, caches)
+                x, _, _ = layer(x, context, caches)
             elif isinstance(layer, TemporalTransformer):
+                # here
                 # print(f'[TemporalTransformer] in TimestepEmbedSequential')
                 x = rearrange(x, '(b f) c h w -> b c f h w', b=batch_size)
                 x, q1, q2 = layer(x, context, caches)
@@ -539,7 +544,7 @@ class UNetModel(nn.Module):
             zero_module(conv_nd(dims, model_channels, out_channels, 3, padding=1)),
         )
 
-    def avg_and_thresholding(self, attn_list):
+    def ostu_thresh_ST(self, attn_list):
         avg_attn = None
         avg_attn_list = []
 
@@ -549,21 +554,71 @@ class UNetModel(nn.Module):
             avg_attn_list.append(attn)
 
             attn = attn.mean(0).detach().cpu().numpy()
+            attn2 = np.expand_dims(attn[:,[1,2]].mean(1), axis=1)
+            # attn2 = np.expand_dims(attn[:,[1,2,3,4,5]].mean(1), axis=1)
+            attn3 = np.repeat(attn2, 77, axis=1)
+            # attn_size = {
+            #     2560: (40,64),
+            #     640: (20,32),
+            #     160: (10,16)
+            # }
+            # if attn.shape[1] == 77:
+            #     h, w = attn_size[attn2.shape[0]]
+            #     img = rearrange(attn, '(h w) c -> h w c', h=h, w=w)
+            #     plt.imshow(img[:,:,1])
+            #     plt.savefig(f'Unet_{i}-th.jpg')
 
-            (T, threshInv) = cv2.threshold(np.uint8(attn*255),0,255,cv2.THRESH_OTSU)
-            threshInv = np.where(threshInv > 1, -np.inf, 0)
-            mask = torch.tensor(threshInv, dtype=torch.float32).to('cuda:0')
+            # attn_norm = cv2.normalize(attn, None, alpha = 0, beta = 255, norm_type = cv2.NORM_MINMAX, dtype = cv2.CV_8UC1)
+            # (T, threshInv) = cv2.threshold(attn_norm, 0, 255, cv2.THRESH_OTSU)
+            (T, threshInv) = cv2.threshold(np.uint8(attn3*255), 0, 255, cv2.THRESH_OTSU)
+            threshInv = np.where(threshInv > 1, -np.inf, 0.)
+
+            # if attn.shape[1] == 77:
+            #     h, w = attn_size[threshInv.shape[0]]
+            #     img2 = rearrange(threshInv, '(h w) c -> h w c', h=h, w=w)
+            #     plt.imshow(img2[:,:,1])
+            #     plt.savefig(f'Unet_{i}-th_mask.jpg')
         
+            mask = torch.tensor(threshInv, dtype=torch.float32).to('cuda:0')
             attn_list[i] = mask
 
+        mask_all = None
+        # avg_attn = torch.cat(avg_attn_list, dim=0).mean(0).detach().cpu().numpy()
+
+        # (T, threshInv) = cv2.threshold(np.uint8(avg_attn*255), 0, 255, cv2.THRESH_OTSU)
+
+        # # threshInv = np.where(threshInv > 1, -np.inf, 0)
+
+        # this is for TemporalTransformer
+        # threshInv = np.where(threshInv > 1, -np.inf, 0)
+        # mask_all = torch.tensor(threshInv, dtype=torch.float32).to('cuda:0')
+
+        return mask_all, attn_list
+    
+    def ostu_thresh_TT(self, attn_list):
+        avg_attn = None
+        avg_attn_list = []
+
+        for i, attn in enumerate(attn_list):
+            if attn is None:
+                continue
+            avg_attn_list.append(attn)
+
+            attn = attn.mean(0).detach().cpu().numpy()
+            (T, threshInv) = cv2.threshold(np.uint8(attn*255), 0, 255, cv2.THRESH_OTSU)
+            threshInv = np.where(threshInv > 1, -np.inf, 0.)
+
+            mask = torch.tensor(threshInv, dtype=torch.float32).to('cuda:0')
+            attn_list[i] = mask
+
+        mask_all = None
         avg_attn = torch.cat(avg_attn_list, dim=0).mean(0).detach().cpu().numpy()
 
-        (T, threshInv) = cv2.threshold(np.uint8(avg_attn*255),0,255,cv2.THRESH_OTSU)
+        (T, threshInv) = cv2.threshold(np.uint8(avg_attn*255), 0, 255, cv2.THRESH_OTSU)
 
-        # threshInv = np.where(threshInv > 1, -np.inf, 0)
+        # this is for TemporalTransformer
         threshInv = np.where(threshInv > 1, -np.inf, 0)
         mask_all = torch.tensor(threshInv, dtype=torch.float32).to('cuda:0')
-
 
         return mask_all, attn_list
 
@@ -610,11 +665,25 @@ class UNetModel(nn.Module):
             10: 1,
             11: 11
         }
+        # out2in = {
+        #     0: None,
+        #     1: None,
+        #     2: None,
+        #     3: 8,
+        #     4: 7,
+        #     5: 7,
+        #     6: 5,
+        #     7: 4,
+        #     8: 4,
+        #     9: None,
+        #     10: None,
+        #     11: 11
+        # }
         # len(self.input_blocks) = 12
         for id, module in enumerate(self.input_blocks):
             # round 1: context.shape = (16,93,1024)
             # round 2: context.shape = (16,77,1024)
-            # print(f'----- input_blocks {id}-th {module.__class__.__name__}, h={h.shape} -----')
+            # print(f'====== input_blocks {id}-th {module.__class__.__name__}, h={h.shape} ======')
             h, q1, q2 = module(h, emb, context=context, batch_size=b)
             if id ==0 and self.addition_attention:
                 h, q1, q2 = self.init_attn(h, emb, context=context, batch_size=b)
@@ -625,9 +694,9 @@ class UNetModel(nn.Module):
                 adapter_idx += 1
 
             # here
-            del q1, q2
-            # cache1.append(q1)
-            # cache2.append(q2)
+            # del q1, q2
+            cache1.append(q1)
+            cache2.append(q2)
             hs.append(h)
         if features_adapter is not None:
             assert len(features_adapter)==adapter_idx, 'Wrong features_adapter'
@@ -635,21 +704,22 @@ class UNetModel(nn.Module):
         h, _, _ = self.middle_block(h, emb, context=context, batch_size=b)
 
         # here
-        # mask1_all, mask1_list = self.avg_and_thresholding(cache1)
-        # mask2_all, mask2_list = self.avg_and_thresholding(cache2)
+        mask1_all, mask1_list = self.ostu_thresh_TT(cache1)
+        mask2_all, mask2_list = self.ostu_thresh_TT(cache2)
 
         for idx, module in enumerate(self.output_blocks):
-            # print(f'----- output_blocks {idx}-th {module.__class__.__name__}, h={h.shape} -----')
+            # print(f'====== output_blocks {idx}-th {module.__class__.__name__}, h={h.shape} ======')
 
             h = torch.cat([h, hs.pop()], dim=1)
 
             caches = None
             # caches = ([1], [1])
             # here
-            # if out2in[idx] is not None:
-            #     # q_cache = (cache1[out2in[idx]], cache2[out2in[idx]])
-            #     caches = (mask1_list[out2in[idx]], mask2_list[out2in[idx]])
-            #     # caches = (mask1_all, mask2_all)
+            if out2in[idx] is not None:
+                # q_cache = (cache1[out2in[idx]], cache2[out2in[idx]])
+                caches = (mask1_list[out2in[idx]], mask2_list[out2in[idx]])
+                # print(f'caches1={caches[0].shape}, caches2={caches[1].shape}')
+                # caches = (mask1_all, mask2_all)
             h, q1, q2 = module(h, emb, context=context, batch_size=b, caches=caches)
         h = h.type(x.dtype)
         y = self.out(h)

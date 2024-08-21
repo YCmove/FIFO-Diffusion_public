@@ -150,7 +150,7 @@ class CrossAttention(nn.Module):
         scale = None
         L, S = q.size(-2), k.size(-2)
         scale_factor = 1 / math.sqrt(q.size(-1)) if scale is None else scale
-        attn_bias = torch.zeros(L, S, dtype=q.dtype).to(device='cuda:0')
+
         # if is_causal:
         #     assert mask is None
         #     temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
@@ -163,7 +163,10 @@ class CrossAttention(nn.Module):
         #     else:
         #         attn_bias += mask
         attn_weight = q @ k.transpose(-2, -1) * scale_factor
+
+        attn_bias = torch.zeros(L, S, dtype=q.dtype).to(device='cuda:0')
         attn_weight += attn_bias
+
         attn_weight = torch.softmax(attn_weight, dim=-1)
         attn_weight = torch.dropout(attn_weight, p=0.0, train=True)
         return attn_weight
@@ -196,9 +199,11 @@ class CrossAttention(nn.Module):
             (q, k, v),
         )
 
+        # print(f'1. [nan] q={q.view(-1).isnan().sum()}, k={k.view(-1).isnan().sum()}, v={v.view(-1).isnan().sum()}')
+
         attn_bias = None
         # here
-        # if q_cache is not None:
+        # if cache is not None:
         #     B = q.shape[0]
         #     attn_bias=torch.stack([q_cache]*B, dim=0)
         #     # q = 0.8*q + 0.2*q_cache
@@ -207,50 +212,72 @@ class CrossAttention(nn.Module):
         # print(f'[efficient_forward] q={q.shape}, k={k.shape}, v={v.shape}')
         
 
+
+        
+
+        attn_map = self.equivalent_attn_map(q, k, v, attn_bias=None)
+        # print(f'[efficient_forward] attn_map={attn_map.shape}')
         # here
+        # ST
+        # if cache is not None and context is not None and attn_map.shape[2] == 77:
+        # TT
+        if cache is not None and context is not None and attn_map.shape[2] == 16:
 
-        # out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=attn_bias, op=None)
-        # attn_map = self.equivalent_attn_map(q, k, v, attn_bias=None)
-
-        # attn_map.shape[2] == 16 is the TemporalTransformer
-        if cache is not None and context is not None and attn_map.shape[2] == 77:
-
-            attn_map = attn_map.detach().cpu().numpy()
+        #     attn_map = attn_map.detach().cpu().numpy()
             
-            # attn_map2 = rearrange(attn_map, 'b (h w) c -> b h w c', h=h, w=w)
-            attn_map_mean = attn_map.mean(0)
+        #     # attn_map2 = rearrange(attn_map, 'b (h w) c -> b h w c', h=h, w=w)
+        #     attn_map_mean = attn_map.mean(0)
 
             
-            # attn_map_token1 = attn_map_mean[:,:,1]
-            # attn_map_token2 = attn_map_mean[:,:,2]
+        #     # attn_map_token1 = attn_map_mean[:,:,1]
+        #     # attn_map_token2 = attn_map_mean[:,:,2]
 
-            # a person swimming in ocean, high quality, 4K resolution.
-            # for i in [2]:
-            # attn_token = attn_map_mean[:,i]
-            # attn_token = attn_map_mean[:,i]
-            # plt.imshow(attn_token)
-            # plt.savefig(f'token_{i}.jpg')
+        #     # a person swimming in ocean, high quality, 4K resolution.
+        #     # for i in [2]:
+        #     # attn_token = attn_map_mean[:,i]
+        #     # attn_token = attn_map_mean[:,i]
+        #     # plt.imshow(attn_token)
+        #     # plt.savefig(f'token_{i}.jpg')
 
-            (T, threshInv) = cv2.threshold(np.uint8(attn_map_mean*255),0,255,cv2.THRESH_OTSU)
-            threshInv = np.where(threshInv > 1, -np.inf, 0)
-            masking = torch.tensor(threshInv, dtype=torch.float32).to('cuda:0')
-            # plt.imshow(threshInv)
-            # plt.savefig(f'token_{i}_mask.jpg')
+        #     (T, threshInv) = cv2.threshold(np.uint8(attn_map_mean*255),0,255,cv2.THRESH_OTSU)
+        #     threshInv = np.where(threshInv > 1, -np.inf, 0)
+            masking = torch.tensor(cache, dtype=torch.float32).to('cuda:0')
+        #     # plt.imshow(threshInv)
+        #     # plt.savefig(f'token_{i}_mask.jpg')
             B = q.shape[0]
             attn_bias=torch.stack([masking]*B, dim=0) # (80, 2560, 77)
             _, M, K = attn_bias.shape
-            # attn_bias = rearrange(attn_bias, 'b m c -> b c m')
-            # pad = torch.where(torch.zeros([80,2560,3])==0, -np.inf, 1).to('cuda:0')
-            pad = torch.where(torch.zeros([B,M,3])==0, -np.inf, 1).to('cuda:0')
-            padkv = torch.where(torch.zeros([B,3,64])==0, -np.inf, 1).to('cuda:0')
-            attn_bias = torch.cat([attn_bias,pad], dim=2)
-            k = torch.cat([k, padkv], dim=1)
-            v = torch.cat([v, padkv], dim=1)
+        #     # attn_bias = rearrange(attn_bias, 'b m c -> b c m')
 
+
+            # only for ST
+            # eight_pad = 8 * ((K // 8) + 1) - K
+            # pad = torch.zeros([B,M,eight_pad]).to('cuda:0')
+            # padkv = torch.zeros([B,eight_pad,64]).to('cuda:0')
+            # attn_bias = torch.cat([attn_bias, pad], dim=2)
+            # k = torch.cat([k, padkv], dim=1)
+            # v = torch.cat([v, padkv], dim=1)
+            # attn_bias2 = torch.zeros([B,M,K+eight_pad]).to('cuda:0')
+
+            out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=attn_bias, op=None)
+            # out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_bias, dropout_p=0.0)
         # for temparal: attn_bias={3200,16,16}, q=(3200,16,64),k=v=(3200,16,64)
+        # 40*64 = 2560
+        # for spatial: attn_map={80,2560,2560}, q=(80,2560,64),k=v=(80,2560,64)
         #  Q* K.T
+            # print(f'2. [nan] q={q.view(-1).isnan().sum()}, k={k.view(-1).isnan().sum()}, v={v.view(-1).isnan().sum()}')
 
-        out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=attn_bias, op=None)
+            if torch.isnan(out[0,0,0]) or torch.isnan(out[0,0,10]):
+                # raise Exception('out is nan')
+                print('out is nan')
+                attn_map = self.equivalent_attn_map(q, k, v, attn_bias=None)
+
+        else:
+            # print(f'3. [nan] q={q.view(-1).isnan().sum()}, k={k.view(-1).isnan().sum()}, v={v.view(-1).isnan().sum()}')
+
+            out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=attn_bias, op=None)
+            # out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_bias, dropout_p=0.0)
+
 
 
         ## considering image token additionally
@@ -283,8 +310,8 @@ class CrossAttention(nn.Module):
             out = out + self.image_cross_attention_scale * out_ip
         
         # here
-        # return self.to_out(out), attn_map
-        return self.to_out(out), None
+        return self.to_out(out), attn_map
+        # return self.to_out(out), None
 
 
 class BasicTransformerBlock(nn.Module):
@@ -320,13 +347,15 @@ class BasicTransformerBlock(nn.Module):
         return checkpoint(self._forward, input_tuple, self.parameters(), self.checkpoint)
 
     def _forward(self, x, context=None, mask=None, caches=None):
-        q1_cache = None
-        q2_cache = None
+        cache1 = None
+        cache2 = None
         if caches is not None:
-            q1_cache, q2_cache = caches
-        x1, q1 = self.attn1(self.norm1(x), context=context if self.disable_self_attn else None, mask=mask, cache=q1_cache)
+            cache1, cache2 = caches
+        
+        # No context for the first self-attention
+        x1, q1 = self.attn1(self.norm1(x), context=context if self.disable_self_attn else None, mask=mask, cache=None)
         x = x + x1
-        x2, q2 = self.attn2(self.norm2(x), context=context, mask=mask, cache=q2_cache)
+        x2, q2 = self.attn2(self.norm2(x), context=context, mask=mask, cache=cache2)
         x = x + x2
         x = self.ff(self.norm3(x)) + x
         return x, q1, q2
@@ -387,7 +416,7 @@ class SpatialTransformer(nn.Module):
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w).contiguous()
         if not self.use_linear:
             x = self.proj_out(x)
-        return x + x_in
+        return x + x_in, q1, q2
     
     
 class TemporalTransformer(nn.Module):
@@ -440,7 +469,7 @@ class TemporalTransformer(nn.Module):
             self.proj_out = zero_module(nn.Linear(inner_dim, in_channels))
         self.use_linear = use_linear
 
-    def forward(self, x, context=None, cache=None):
+    def forward(self, x, context=None, caches=None):
         b, c, t, h, w = x.shape
         x_in = x
         q1 = None
@@ -462,7 +491,7 @@ class TemporalTransformer(nn.Module):
         if self.only_self_att:
             ## note: if no context is given, cross-attention defaults to self-attention
             for i, block in enumerate(self.transformer_blocks):
-                x, q1, q2 = block(x, mask=mask, caches=cache)
+                x, q1, q2 = block(x, mask=mask, caches=caches)
             x = rearrange(x, '(b hw) t c -> b hw t c', b=b).contiguous()
         else:
             x = rearrange(x, '(b hw) t c -> b hw t c', b=b).contiguous()

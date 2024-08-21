@@ -17,3 +17,4 @@ taming
 __pycache__
 Open-Sora-Plan
 .vscode
+*.jpg
