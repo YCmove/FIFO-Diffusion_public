@@ -294,6 +294,7 @@ class DDIMSampler(object):
             e_t_uncond = self.model.apply_model(x, t, unconditional_conditioning, **kwargs)
             
             # text cfg
+            # prompt classifier-free scale == unconditional_guidance_scale == 12
             e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
 
         return e_t
