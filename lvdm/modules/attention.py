@@ -127,8 +127,10 @@ class CrossAttention(nn.Module):
             sim_ip = sim_ip.softmax(dim=-1)
             out_ip = torch.einsum('b i j, b j d -> b i d', sim_ip, v_ip)
             out_ip = rearrange(out_ip, '(b h) n d -> b n (h d)', h=h)
+
+            # this is the dual cross-attention layer
             out = out + self.image_cross_attention_scale * out_ip
-        del q
+        del q # why not delete k, v, k_ip, v_ip?
 
         return self.to_out(out)
     
@@ -324,10 +326,12 @@ class BasicTransformerBlock(nn.Module):
         q2_cache = None
         if caches is not None:
             q1_cache, q2_cache = caches
+        print(f'attn1')
         x1, q1 = self.attn1(self.norm1(x), context=context if self.disable_self_attn else None, mask=mask, cache=q1_cache)
-        x = x + x1
+        x = x + x1 # residual/skip connection
+        print(f'attn2')
         x2, q2 = self.attn2(self.norm2(x), context=context, mask=mask, cache=q2_cache)
-        x = x + x2
+        x = x + x2 # residual/skip connection
         x = self.ff(self.norm3(x)) + x
         return x, q1, q2
 

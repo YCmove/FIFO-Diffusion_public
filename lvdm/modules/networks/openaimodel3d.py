@@ -38,20 +38,22 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
     def forward(self, x, emb, context=None, batch_size=None, caches=None):
         q1 = None
         q2 = None
-        for layer in self:
+        for i, layer in enumerate(self):
+            print(f'{i}-timestep in TimestepEmbedSequential')
             if isinstance(layer, TimestepBlock):
                 # ResBlock, convolutional layers
-                # print(f'[Conv] in TimestepEmbedSequential')
+                print(f'[Conv2D with emb] in TimestepEmbedSequential')
                 x = layer(x, emb, batch_size)
             elif isinstance(layer, SpatialTransformer):
-                # print(f'[SpatialTransformer] in TimestepEmbedSequential')
+                print(f'[SpatialTransformer] in TimestepEmbedSequential')
                 x = layer(x, context, caches)
             elif isinstance(layer, TemporalTransformer):
-                # print(f'[TemporalTransformer] in TimestepEmbedSequential')
+                print(f'[TemporalTransformer] in TimestepEmbedSequential')
                 x = rearrange(x, '(b f) c h w -> b c f h w', b=batch_size)
                 x, q1, q2 = layer(x, context, caches)
                 x = rearrange(x, 'b c f h w -> (b f) c h w')
             else:
+                print(f'[Conv2D with just x] in TimestepEmbedSequential')
                 x = layer(x,)
         return x, q1, q2
 
@@ -583,6 +585,7 @@ class UNetModel(nn.Module):
 
         b,_,t,_,_ = x.shape
         ## repeat t times for context [(b t) 77 768] & time embedding
+        # [repeat_interleave] context = (1, 93, 1024) -> (16, 93, 1024)
         context = context.repeat_interleave(repeats=t, dim=0)
         # context.shape = (1,93,1024) -> (16.93,1024)
         if not is_fifo:
@@ -614,7 +617,7 @@ class UNetModel(nn.Module):
         for id, module in enumerate(self.input_blocks):
             # round 1: context.shape = (16,93,1024)
             # round 2: context.shape = (16,77,1024)
-            # print(f'----- input_blocks {id}-th {module.__class__.__name__}, h={h.shape} -----')
+            print(f'----- input_blocks {id}-th {module.__class__.__name__}, h={h.shape} -----')
             h, q1, q2 = module(h, emb, context=context, batch_size=b)
             if id ==0 and self.addition_attention:
                 h, q1, q2 = self.init_attn(h, emb, context=context, batch_size=b)
@@ -639,7 +642,7 @@ class UNetModel(nn.Module):
         # mask2_all, mask2_list = self.avg_and_thresholding(cache2)
 
         for idx, module in enumerate(self.output_blocks):
-            # print(f'----- output_blocks {idx}-th {module.__class__.__name__}, h={h.shape} -----')
+            print(f'----- output_blocks {idx}-th {module.__class__.__name__}, h={h.shape} -----')
 
             h = torch.cat([h, hs.pop()], dim=1)
 

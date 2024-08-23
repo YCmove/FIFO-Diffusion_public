@@ -72,6 +72,8 @@ def main(args):
 
     if mode == 't2v':
         prompt_list = load_prompts(args.prompt_file)
+    elif mode == 't2v_cohe':
+        prompt_list = load_prompts(args.prompt_file)
     else:
         assert mode == 'i2v'
         img_list, prompt_list = load_i2v_prompts(args.prompt_file)
@@ -96,6 +98,10 @@ def main(args):
 
         if mode == 't2v':
             cond = {"c_crossattn": [text_emb], "fps": fps}
+
+        elif mode == 't2v_cohe':
+            cond = {"c_crossattn": [text_emb], "fps": fps}
+            
         else:
             assert mode == 'i2v'
             ########### i2v ###########

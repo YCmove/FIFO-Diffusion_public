@@ -200,7 +200,7 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
         if hasattr(model, 'embedder'):
             uc_img = torch.zeros(noise_shape[0],3,224,224).to(model.device)
             ## img: b c h w >> b l c
-            uc_img = model.get_image_embeds(uc_img)
+            uc_img = model.get_image_embeds(uc_img) # uc_img = (1, 16, 1024)
             uc_emb = torch.cat([uc_emb, uc_img], dim=1)
         
         # for both i2v and t2v
@@ -235,6 +235,9 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
             t = timesteps[start_idx:end_idx]
             idx = indices[start_idx:end_idx]
 
+            print(f'---------- {i}-th fifo sampling ----------')
+            print(f'rank: {rank} / start_idx={start_idx}, midpoint_idx={midpoint_idx}, end_idx={end_idx}')
+
             input_latents = latents[:,:,start_idx:end_idx].clone()
             output_latents, _ = ddim_sampler.fifo_onestep(
                                             cond=cond,
@@ -247,11 +250,18 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
                                             **kwargs
                                             )
             if args.lookahead_denoising:
+                # output_latents = (1, 4, 16, 40, 64)
+                # [:,:,-8:] = last 8 frames from dim=2
                 latents[:,:,midpoint_idx:end_idx] = output_latents[:,:,-(num_frames_per_gpu//2):]
             else:
                 latents[:,:,start_idx:end_idx] = output_latents
             del output_latents
         
+        if args.mode == 't2v_cohe':
+            cond = cond
+            uc_img = model.get_image_embeds(uc_img)
+            cond.update({'c_crossattn': [uc_emb]})
+            pass
 
         # reconstruct from latent to pixel space
         first_frame_idx = args.video_length // 2 if args.lookahead_denoising else 0
