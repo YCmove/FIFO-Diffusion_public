@@ -530,8 +530,6 @@ class LatentDiffusion(DDPM):
             key = 'c_concat' if self.model.conditioning_key == 'concat' else 'c_crossattn'
             cond = {key: cond}
 
-        # round 1: cond['c_crossattn'][0].shape = (1,93,1024)
-        # round 2: cond['c_crossattn'][0].shape = (1,77,1024)
         x_recon = self.model(x_noisy, t, **cond, **kwargs)
 
         if isinstance(x_recon, tuple):
@@ -701,7 +699,9 @@ class LatentVisualDiffusion(LatentDiffusion):
     ## Never delete this func: it is used in log_images() and inference stage
     def get_image_embeds(self, batch_imgs):
         ## img: b c h w
+        # embedder: FrozenOpenCLIPImageEmbedderV2
         img_token = self.embedder(batch_imgs)
+        # Resampler
         img_emb = self.image_proj_model(img_token)
         return img_emb
 

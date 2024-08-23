@@ -286,16 +286,18 @@ class DDIMSampler(object):
     def unet(self, x, c, t, unconditional_guidance_scale=1.,
              unconditional_conditioning=None, **kwargs):
         
-        # round 1: c['c_crossattn'][0].shape=(1,83,1024)
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
             e_t = self.model.apply_model(x, t, c, **kwargs) # unet denoiser
         else:
+            # i2v: c.c_crossattn = embed image (already add noise)
             e_t = self.model.apply_model(x, t, c, **kwargs)
+
+            # i2v: unconditional_conditioning.c_crossattn = random noise
             e_t_uncond = self.model.apply_model(x, t, unconditional_conditioning, **kwargs)
             
-            # text cfg
+            # text cfg: classifier-free guidance
             e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
-
+        # return e_t_uncond
         return e_t
 
     @torch.no_grad()

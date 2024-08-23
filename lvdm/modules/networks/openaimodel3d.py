@@ -584,7 +584,7 @@ class UNetModel(nn.Module):
         b,_,t,_,_ = x.shape
         ## repeat t times for context [(b t) 77 768] & time embedding
         context = context.repeat_interleave(repeats=t, dim=0)
-        # context.shape = (16.93,1024)
+        # context.shape = (1,93,1024) -> (16.93,1024)
         if not is_fifo:
             emb = emb.repeat_interleave(repeats=t, dim=0)
 

@@ -129,6 +129,9 @@ class Resampler(nn.Module):
         x = self.proj_in(x)
         
         for attn, ff in self.layers:
+            # (4x)
+            # 1-th PerceiverAttention
+            # 2-th Sequential
             latents = attn(x, latents) + latents
             latents = ff(latents) + latents
             

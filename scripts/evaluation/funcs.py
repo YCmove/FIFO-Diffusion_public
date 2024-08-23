@@ -185,21 +185,25 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
     ## construct unconditional guidance
     if cfg_scale != 1.0:
         if uncond_type == "empty_seq":
+            # i2v
             prompts = batch_size * [""]
             #prompts = N * T * [""]  ## if is_imgbatch=True
             uc_emb = model.get_learned_conditioning(prompts)
             
         elif uncond_type == "zero_embed":
+            # t2v
             c_emb = cond["c_crossattn"][0] if isinstance(cond, dict) else cond
             uc_emb = torch.zeros_like(c_emb)
 
         ## process image embedding token
+        # i2v
         if hasattr(model, 'embedder'):
             uc_img = torch.zeros(noise_shape[0],3,224,224).to(model.device)
             ## img: b c h w >> b l c
             uc_img = model.get_image_embeds(uc_img)
             uc_emb = torch.cat([uc_emb, uc_img], dim=1)
         
+        # for both i2v and t2v
         if isinstance(cond, dict):
             uc = {key:cond[key] for key in cond.keys()}
             uc.update({'c_crossattn': [uc_emb]})
