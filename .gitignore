@@ -18,3 +18,4 @@ __pycache__
 Open-Sora-Plan
 .vscode
 *.jpg
+**/*.log

@@ -1,3 +1,4 @@
+import logging
 import cv2
 import numpy as np
 from functools import partial
@@ -39,22 +40,25 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
         q1 = None
         q2 = None
         for i, layer in enumerate(self):
-            print(f'{i}-timestep in TimestepEmbedSequential')
+            logging.info(f'--- Start {i}-timestep in TimestepEmbedSequential ---')
+            logging.info(f'input x={x.shape}')
             if isinstance(layer, TimestepBlock):
                 # ResBlock, convolutional layers
-                print(f'[Conv2D with emb] in TimestepEmbedSequential')
+                logging.info(f'[Conv2D with emb] {layer}')
                 x = layer(x, emb, batch_size)
             elif isinstance(layer, SpatialTransformer):
-                print(f'[SpatialTransformer] in TimestepEmbedSequential')
+                logging.info(f'[SpatialTransformer] {layer}')
                 x = layer(x, context, caches)
             elif isinstance(layer, TemporalTransformer):
-                print(f'[TemporalTransformer] in TimestepEmbedSequential')
                 x = rearrange(x, '(b f) c h w -> b c f h w', b=batch_size)
+                logging.info(f'[TemporalTransformer] {layer}\ninput x={x.shape}')
                 x, q1, q2 = layer(x, context, caches)
                 x = rearrange(x, 'b c f h w -> (b f) c h w')
             else:
-                print(f'[Conv2D with just x] in TimestepEmbedSequential')
+                logging.info(f'[Conv2D with just x] {layer}')
                 x = layer(x,)
+            logging.info(f'output x={x.shape}')
+            logging.info(f'--- End of {i}-timestep in TimestepEmbedSequential ---')
         return x, q1, q2
 
 
@@ -615,12 +619,12 @@ class UNetModel(nn.Module):
         }
         # len(self.input_blocks) = 12
         for id, module in enumerate(self.input_blocks):
-            # round 1: context.shape = (16,93,1024)
-            # round 2: context.shape = (16,77,1024)
-            print(f'----- input_blocks {id}-th {module.__class__.__name__}, h={h.shape} -----')
+            logging.info(f'------- start of {id}-th input_blocks {module.__class__.__name__}, h={h.shape} -------')
             h, q1, q2 = module(h, emb, context=context, batch_size=b)
             if id ==0 and self.addition_attention:
+                logging.info(f'------- start of init_attention h={h.shape} -------')
                 h, q1, q2 = self.init_attn(h, emb, context=context, batch_size=b)
+                logging.info(f'------- end of init_attention h={h.shape} -------')
             ## plug-in adapter features
             if ((id+1)%3 == 0) and features_adapter is not None:
                 # never executed
@@ -635,14 +639,18 @@ class UNetModel(nn.Module):
         if features_adapter is not None:
             assert len(features_adapter)==adapter_idx, 'Wrong features_adapter'
 
+            logging.info(f'------- end of {id}-th input_blocks {module.__class__.__name__}, h={h.shape} -------')
+
+        logging.info(f'----- start of middle_block {module.__class__.__name__}, h={h.shape} -----')
         h, _, _ = self.middle_block(h, emb, context=context, batch_size=b)
+        logging.info(f'----- end of middle_block {module.__class__.__name__}, h={h.shape} -----')
 
         # here
         # mask1_all, mask1_list = self.avg_and_thresholding(cache1)
         # mask2_all, mask2_list = self.avg_and_thresholding(cache2)
 
         for idx, module in enumerate(self.output_blocks):
-            print(f'----- output_blocks {idx}-th {module.__class__.__name__}, h={h.shape} -----')
+            logging.info(f'----- start of {idx}-th output_blocks {module.__class__.__name__}, h={h.shape} -----')
 
             h = torch.cat([h, hs.pop()], dim=1)
 
@@ -654,6 +662,8 @@ class UNetModel(nn.Module):
             #     caches = (mask1_list[out2in[idx]], mask2_list[out2in[idx]])
             #     # caches = (mask1_all, mask2_all)
             h, q1, q2 = module(h, emb, context=context, batch_size=b, caches=caches)
+            logging.info(f'----- end of {idx}-th output_blocks {module.__class__.__name__}, h={h.shape} -----')
+
         h = h.type(x.dtype)
         y = self.out(h)
         

@@ -1,4 +1,4 @@
-import os, sys, glob, math
+import os, sys, glob, math, logging
 import numpy as np
 from collections import OrderedDict
 from decord import VideoReader, cpu
@@ -160,6 +160,14 @@ def base_ddim_sampling(model, cond, noise_shape, ddim_steps=50, ddim_eta=1.0,\
 
     return batch_images, ddim_sampler, samples
 
+
+def update_c_crossattn(model, frame16, cond):
+    frame_tensor = model.decode_first_stage_2DAE(frame16)
+    first_ref_img_emb = model.get_image_embeds(frame_tensor[:,:,0,:,:])
+    cond['c_crossattn'] = [torch.cat([cond['c_crossattn'][0], first_ref_img_emb], dim=1)]
+
+    return cond
+
 def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
                         cfg_scale=1.0, output_dir=None, latents_dir=None, save_frames=False, **kwargs):
     batch_size = noise_shape[0]
@@ -185,7 +193,7 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
     ## construct unconditional guidance
     if cfg_scale != 1.0:
         if uncond_type == "empty_seq":
-            # i2v
+            # i2v and t2v_cohe
             prompts = batch_size * [""]
             #prompts = N * T * [""]  ## if is_imgbatch=True
             uc_emb = model.get_learned_conditioning(prompts)
@@ -200,9 +208,15 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
         if hasattr(model, 'embedder'):
             uc_img = torch.zeros(noise_shape[0],3,224,224).to(model.device)
             ## img: b c h w >> b l c
-            uc_img = model.get_image_embeds(uc_img) # uc_img = (1, 16, 1024)
+            uc_img = model.get_image_embeds(uc_img) # uc_img = (1, 3, 24, 24) -> (1, 16, 1024)
             uc_emb = torch.cat([uc_emb, uc_img], dim=1)
         
+        # if args.mode == 't2v_cohe':
+        #     cond = model.get_image_embeds(frame_tensor)
+        #     uc_img = model.get_image_embeds(uc_img)
+        #     cond.update({'c_crossattn': [uc_emb]})
+        #     pass
+
         # for both i2v and t2v
         if isinstance(cond, dict):
             uc = {key:cond[key] for key in cond.keys()}
@@ -212,6 +226,13 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
         uc = None
     
     latents = prepare_latents(args, latents_dir, ddim_sampler)
+
+    logging.info(f'Init latents = {latents.shape}')
+
+    # t2v_cohe and t2v_cohe_ar
+    if args.mode in ['t2v_cohe', 't2v_cohe_ar']:
+        cond = update_c_crossattn(model, latents[:,:,0:16], cond)
+
 
     num_frames_per_gpu = args.video_length
     if args.save_frames:
@@ -227,6 +248,8 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
         timesteps = np.concatenate([np.full((args.video_length//2,), timesteps[0]), timesteps])
         indices = np.concatenate([np.full((args.video_length//2,), 0), indices])
     for i in trange(args.new_video_length + args.num_inference_steps - args.video_length, desc="fifo sampling"):
+
+
         for rank in reversed(range(2 * args.num_partitions if args.lookahead_denoising else args.num_partitions)):
             start_idx = rank*(num_frames_per_gpu // 2) if args.lookahead_denoising else rank*num_frames_per_gpu
             midpoint_idx = start_idx + num_frames_per_gpu // 2
@@ -235,8 +258,8 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
             t = timesteps[start_idx:end_idx]
             idx = indices[start_idx:end_idx]
 
-            print(f'---------- {i}-th fifo sampling ----------')
-            print(f'rank: {rank} / start_idx={start_idx}, midpoint_idx={midpoint_idx}, end_idx={end_idx}')
+            logging.info(f'============== {i}-th fifo sampling ===============')
+            logging.info(f'rank: {rank} / start_idx={start_idx}, midpoint_idx={midpoint_idx}, end_idx={end_idx}')
 
             input_latents = latents[:,:,start_idx:end_idx].clone()
             output_latents, _ = ddim_sampler.fifo_onestep(
@@ -257,15 +280,14 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
                 latents[:,:,start_idx:end_idx] = output_latents
             del output_latents
         
-        if args.mode == 't2v_cohe':
-            cond = cond
-            uc_img = model.get_image_embeds(uc_img)
-            cond.update({'c_crossattn': [uc_emb]})
-            pass
+
 
         # reconstruct from latent to pixel space
         first_frame_idx = args.video_length // 2 if args.lookahead_denoising else 0
         frame_tensor = model.decode_first_stage_2DAE(latents[:,:,[first_frame_idx]]) # b,c,1,H,W
+        # latents[:,:,[first_frame_idx]] = (1, 4, 1, 40, 64)
+        # frame_tensor = (1, 3, 1, 320, 512)
+        
 
         if save_frames:
             for j in range(args.video_length):
@@ -283,6 +305,11 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
         fifo_video_frames.append(image)
             
         latents = shift_latents(latents)
+
+        # In auto-regressive manner
+        if args.mode == 't2v_cohe_ar':
+            # Update cond based on last newly generated frame
+            cond = update_c_crossattn(model, latents[:,:,0:8].clone(), cond)
 
     return fifo_video_frames
 

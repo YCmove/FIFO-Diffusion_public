@@ -190,8 +190,7 @@ class DDIMSampler(object):
         b, _, f, _, _ = shape
 
         ts = torch.Tensor(timesteps.copy()).to(device=device, dtype=torch.long) # [16]
-        # round 1: cond['c_crossattn'][0].shape=(1,83,1024)
-        # round 1: unconditional_conditioning.shape=(1,77,1024)
+
         noise_pred = self.unet(latents, cond, ts,
                                 unconditional_guidance_scale=unconditional_guidance_scale,
                                 unconditional_conditioning=unconditional_conditioning,
@@ -329,6 +328,7 @@ class DDIMSampler(object):
             
             noise = sigma_t * noise_like(x.shape, device)
 
+            # DDIM paper eq. 12
             x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
             x_prevs.append(x_prev)
             pred_x0s.append(pred_x0)

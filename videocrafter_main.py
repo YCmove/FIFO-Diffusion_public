@@ -1,3 +1,5 @@
+import sys
+import logging
 from argparse import ArgumentParser
 from omegaconf import OmegaConf
 import os
@@ -9,6 +11,9 @@ from pytorch_lightning import seed_everything
 
 import warnings
 warnings.filterwarnings("ignore")
+
+
+
 
 from scripts.evaluation.funcs import load_model_checkpoint, load_prompts, load_i2v_prompts, load_image_batch, get_filelist, save_gif
 from scripts.evaluation.funcs import base_ddim_sampling, fifo_ddim_sampling
@@ -47,6 +52,27 @@ def set_directory(args, prompt):
 
 
 def main(args):
+
+    if args.debug:
+            logging.basicConfig(
+            level=logging.INFO,
+            format="",
+            handlers=[
+                logging.FileHandler("debug1.log"),
+                # logging.StreamHandler()
+            ]
+        )
+    
+    else:
+        logging.basicConfig(
+            level=logging.WARNING,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            handlers=[
+                logging.FileHandler("current.log"),
+                # logging.StreamHandler()
+            ]
+        )
+
     ## step 1: model config
     ## -----------------------------------------------------------------
     config = OmegaConf.load(args.config)
@@ -72,7 +98,7 @@ def main(args):
 
     if mode == 't2v':
         prompt_list = load_prompts(args.prompt_file)
-    elif mode == 't2v_cohe':
+    elif mode in ['t2v_cohe', 't2v_cohe_ar']:
         prompt_list = load_prompts(args.prompt_file)
     else:
         assert mode == 'i2v'
@@ -99,7 +125,7 @@ def main(args):
         if mode == 't2v':
             cond = {"c_crossattn": [text_emb], "fps": fps}
 
-        elif mode == 't2v_cohe':
+        elif mode in ['t2v_cohe', 't2v_cohe_ar']:
             cond = {"c_crossattn": [text_emb], "fps": fps}
             
         else:
@@ -164,6 +190,7 @@ if __name__ == "__main__":
     parser.add_argument("--fps", type=int, default=8)
     parser.add_argument("--unconditional_guidance_scale", type=float, default=12.0, help="prompt classifier-free guidance")
     parser.add_argument("--lookahead_denoising", "-ld", action="store_false", default=True)
+    parser.add_argument("--debug", action="store_true", default=False)
     parser.add_argument("--experiment", "-ex", action='store', type=str, default=None)
     parser.add_argument("--eta", "-e", type=float, default=1.0)
     parser.add_argument("--output_dir", type=str, default=None, help="custom output directory")

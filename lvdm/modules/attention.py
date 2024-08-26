@@ -1,4 +1,5 @@
 import math
+import logging
 from functools import partial
 import torch
 from torch import nn, einsum
@@ -184,9 +185,13 @@ class CrossAttention(nn.Module):
             v = self.to_v(context)
             k_ip = self.to_k_ip(context_img)
             v_ip = self.to_v_ip(context_img)
+            logging.info(f'[efficient_forward-init] q={q.shape}, k={k.shape}, v={v.shape}')
+            logging.info(f'[efficient_forward-init] k_ip={k_ip.shape}, v_ip={v_ip.shape}')
         else:
             k = self.to_k(context)
             v = self.to_v(context)
+
+            
 
         b, _, _ = q.shape
         q, k, v = map(
@@ -206,7 +211,7 @@ class CrossAttention(nn.Module):
         #     # q = 0.8*q + 0.2*q_cache
 
         # actually compute the attention, what we cannot get enough of
-        # print(f'[efficient_forward] q={q.shape}, k={k.shape}, v={v.shape}')
+        logging.info(f'[efficient_forward-after map] q={q.shape}, k={k.shape}, v={v.shape}')
         
 
         # here
@@ -265,6 +270,8 @@ class CrossAttention(nn.Module):
                 .contiguous(),
                 (k_ip, v_ip),
             )
+            logging.info(f'[efficient_forward-after map] k_ip={k_ip.shape}, v_ip={v_ip.shape}')
+
             out_ip = xformers.ops.memory_efficient_attention(q, k_ip, v_ip, attn_bias=None, op=None)
             out_ip = (
                 out_ip.unsqueeze(0)
@@ -284,8 +291,12 @@ class CrossAttention(nn.Module):
         if context is not None and self.img_cross_attention:
             out = out + self.image_cross_attention_scale * out_ip
         
+        if torch.isnan(out).any():
+            logging.warning(f'[efficient_forward] output Nan! {torch.isnan(out).sum()}')
+            raise Exception('[efficient_forward] output Nan!')
         # here
         # return self.to_out(out), attn_map
+
         return self.to_out(out), None
 
 
@@ -326,10 +337,15 @@ class BasicTransformerBlock(nn.Module):
         q2_cache = None
         if caches is not None:
             q1_cache, q2_cache = caches
-        print(f'attn1')
+        if self.disable_self_attn:
+            logging.info(f'attn1 cross-attention')
+        else:
+            logging.info(f'attn1 self-attention, no context provided')
+        
         x1, q1 = self.attn1(self.norm1(x), context=context if self.disable_self_attn else None, mask=mask, cache=q1_cache)
         x = x + x1 # residual/skip connection
-        print(f'attn2')
+        
+        logging.info(f'attn2: cross-attention')
         x2, q2 = self.attn2(self.norm2(x), context=context, mask=mask, cache=q2_cache)
         x = x + x2 # residual/skip connection
         x = self.ff(self.norm3(x)) + x
