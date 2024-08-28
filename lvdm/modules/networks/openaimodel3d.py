@@ -44,14 +44,14 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
             logging.info(f'input x={x.shape}')
             if isinstance(layer, TimestepBlock):
                 # ResBlock, convolutional layers
-                logging.info(f'[Conv2D with emb] {layer}')
+                logging.info(f'[Conv2D with emb] {layer},\nemb={emb.shape}')
                 x = layer(x, emb, batch_size)
             elif isinstance(layer, SpatialTransformer):
-                logging.info(f'[SpatialTransformer] {layer}')
-                x = layer(x, context, caches)
+                logging.info(f'[SpatialTransformer] {layer},\ncontext={context.shape}')
+                x = layer(x, context, None)
             elif isinstance(layer, TemporalTransformer):
                 x = rearrange(x, '(b f) c h w -> b c f h w', b=batch_size)
-                logging.info(f'[TemporalTransformer] {layer}\ninput x={x.shape}')
+                logging.info(f'[TemporalTransformer] {layer}\ninput x={x.shape},\ncontext={context.shape}')
                 x, q1, q2 = layer(x, context, caches)
                 x = rearrange(x, 'b c f h w -> (b f) c h w')
             else:
@@ -615,7 +615,7 @@ class UNetModel(nn.Module):
             8: 4,
             9: 2,
             10: 1,
-            11: 11
+            11: None
         }
         # len(self.input_blocks) = 12
         for id, module in enumerate(self.input_blocks):
@@ -632,9 +632,9 @@ class UNetModel(nn.Module):
                 adapter_idx += 1
 
             # here
-            del q1, q2
-            # cache1.append(q1)
-            # cache2.append(q2)
+            # del q1, q2
+            cache1.append(q1)
+            cache2.append(q2)
             hs.append(h)
         if features_adapter is not None:
             assert len(features_adapter)==adapter_idx, 'Wrong features_adapter'
@@ -648,6 +648,7 @@ class UNetModel(nn.Module):
         # here
         # mask1_all, mask1_list = self.avg_and_thresholding(cache1)
         # mask2_all, mask2_list = self.avg_and_thresholding(cache2)
+        qcache_weights = list(np.linspace(0.8, 0.9, num=10))
 
         for idx, module in enumerate(self.output_blocks):
             logging.info(f'----- start of {idx}-th output_blocks {module.__class__.__name__}, h={h.shape} -----')
@@ -657,10 +658,10 @@ class UNetModel(nn.Module):
             caches = None
             # caches = ([1], [1])
             # here
-            # if out2in[idx] is not None:
-            #     # q_cache = (cache1[out2in[idx]], cache2[out2in[idx]])
-            #     caches = (mask1_list[out2in[idx]], mask2_list[out2in[idx]])
-            #     # caches = (mask1_all, mask2_all)
+            if out2in[idx] is not None:
+                caches = (cache1[out2in[idx]], 0), (cache2[out2in[idx]], qcache_weights.pop())
+                # caches = (mask1_list[out2in[idx]], mask2_list[out2in[idx]])
+                # caches = (mask1_all, mask2_all)
             h, q1, q2 = module(h, emb, context=context, batch_size=b, caches=caches)
             logging.info(f'----- end of {idx}-th output_blocks {module.__class__.__name__}, h={h.shape} -----')
 

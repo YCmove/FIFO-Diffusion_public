@@ -205,10 +205,13 @@ class CrossAttention(nn.Module):
 
         attn_bias = None
         # here
-        # if q_cache is not None:
-        #     B = q.shape[0]
-        #     attn_bias=torch.stack([q_cache]*B, dim=0)
-        #     # q = 0.8*q + 0.2*q_cache
+        if cache is not None:
+            # Only in output layers
+            B = q.shape[0]
+            # attn_bias=torch.stack([cache]*B, dim=0)
+            q_cache, vt = cache
+            q = vt * q + (1-vt) * q_cache
+            # q = cache
 
         # actually compute the attention, what we cannot get enough of
         logging.info(f'[efficient_forward-after map] q={q.shape}, k={k.shape}, v={v.shape}')
@@ -216,48 +219,48 @@ class CrossAttention(nn.Module):
 
         # here
 
-        # out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=attn_bias, op=None)
+        out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=attn_bias, op=None)
         # attn_map = self.equivalent_attn_map(q, k, v, attn_bias=None)
 
-        # attn_map.shape[2] == 16 is the TemporalTransformer
-        if cache is not None and context is not None and attn_map.shape[2] == 77:
+        # # attn_map.shape[2] == 16 is the TemporalTransformer
+        # if cache is not None and context is not None and attn_map.shape[2] == 77:
 
-            attn_map = attn_map.detach().cpu().numpy()
+        #     attn_map = attn_map.detach().cpu().numpy()
             
-            # attn_map2 = rearrange(attn_map, 'b (h w) c -> b h w c', h=h, w=w)
-            attn_map_mean = attn_map.mean(0)
+        #     # attn_map2 = rearrange(attn_map, 'b (h w) c -> b h w c', h=h, w=w)
+        #     attn_map_mean = attn_map.mean(0)
 
             
-            # attn_map_token1 = attn_map_mean[:,:,1]
-            # attn_map_token2 = attn_map_mean[:,:,2]
+        #     # attn_map_token1 = attn_map_mean[:,:,1]
+        #     # attn_map_token2 = attn_map_mean[:,:,2]
 
-            # a person swimming in ocean, high quality, 4K resolution.
-            # for i in [2]:
-            # attn_token = attn_map_mean[:,i]
-            # attn_token = attn_map_mean[:,i]
-            # plt.imshow(attn_token)
-            # plt.savefig(f'token_{i}.jpg')
+        #     # a person swimming in ocean, high quality, 4K resolution.
+        #     # for i in [2]:
+        #     # attn_token = attn_map_mean[:,i]
+        #     # attn_token = attn_map_mean[:,i]
+        #     # plt.imshow(attn_token)
+        #     # plt.savefig(f'token_{i}.jpg')
 
-            (T, threshInv) = cv2.threshold(np.uint8(attn_map_mean*255),0,255,cv2.THRESH_OTSU)
-            threshInv = np.where(threshInv > 1, -np.inf, 0)
-            masking = torch.tensor(threshInv, dtype=torch.float32).to('cuda:0')
-            # plt.imshow(threshInv)
-            # plt.savefig(f'token_{i}_mask.jpg')
-            B = q.shape[0]
-            attn_bias=torch.stack([masking]*B, dim=0) # (80, 2560, 77)
-            _, M, K = attn_bias.shape
-            # attn_bias = rearrange(attn_bias, 'b m c -> b c m')
-            # pad = torch.where(torch.zeros([80,2560,3])==0, -np.inf, 1).to('cuda:0')
-            pad = torch.where(torch.zeros([B,M,3])==0, -np.inf, 1).to('cuda:0')
-            padkv = torch.where(torch.zeros([B,3,64])==0, -np.inf, 1).to('cuda:0')
-            attn_bias = torch.cat([attn_bias,pad], dim=2)
-            k = torch.cat([k, padkv], dim=1)
-            v = torch.cat([v, padkv], dim=1)
+        #     (T, threshInv) = cv2.threshold(np.uint8(attn_map_mean*255),0,255,cv2.THRESH_OTSU)
+        #     threshInv = np.where(threshInv > 1, -np.inf, 0)
+        #     masking = torch.tensor(threshInv, dtype=torch.float32).to('cuda:0')
+        #     # plt.imshow(threshInv)
+        #     # plt.savefig(f'token_{i}_mask.jpg')
+        #     B = q.shape[0]
+        #     attn_bias=torch.stack([masking]*B, dim=0) # (80, 2560, 77)
+        #     _, M, K = attn_bias.shape
+        #     # attn_bias = rearrange(attn_bias, 'b m c -> b c m')
+        #     # pad = torch.where(torch.zeros([80,2560,3])==0, -np.inf, 1).to('cuda:0')
+        #     pad = torch.where(torch.zeros([B,M,3])==0, -np.inf, 1).to('cuda:0')
+        #     padkv = torch.where(torch.zeros([B,3,64])==0, -np.inf, 1).to('cuda:0')
+        #     attn_bias = torch.cat([attn_bias,pad], dim=2)
+        #     k = torch.cat([k, padkv], dim=1)
+        #     v = torch.cat([v, padkv], dim=1)
 
         # for temparal: attn_bias={3200,16,16}, q=(3200,16,64),k=v=(3200,16,64)
         #  Q* K.T
 
-        out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=attn_bias, op=None)
+        # out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=attn_bias, op=None)
 
 
         ## considering image token additionally
@@ -295,9 +298,9 @@ class CrossAttention(nn.Module):
             logging.warning(f'[efficient_forward] output Nan! {torch.isnan(out).sum()}')
             raise Exception('[efficient_forward] output Nan!')
         # here
+        return self.to_out(out), q
         # return self.to_out(out), attn_map
-
-        return self.to_out(out), None
+        # return self.to_out(out), None
 
 
 class BasicTransformerBlock(nn.Module):

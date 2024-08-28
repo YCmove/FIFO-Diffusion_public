@@ -58,7 +58,7 @@ def main(args):
             level=logging.INFO,
             format="",
             handlers=[
-                logging.FileHandler("debug1.log"),
+                logging.FileHandler("debug.log"),
                 # logging.StreamHandler()
             ]
         )
