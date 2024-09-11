@@ -18,15 +18,16 @@ This series began with a perplexing body-flipped video ... see more in this [art
 
 ## Features
 
-- Supporting of Image-to-Video(I2V) from VideoCrafter in FIFO-diffusion.
+- Added support for Image-to-Video (I2V) generation in FIFO-Diffusion.
 - Improving Visual Consistency in the long video generation
     1. **[Seeding the initial latent frame](#seeding-the-initial-latent-frame)** as the image embedding.
     2. Use **[Weighted Q-caches](#weighted-q-caches)** in Spatio-Temporal Attention.
     3. **[Extending the Latent Uniformly](#extending-the-latent-uniformly)** before the diagonal denoising.
 - More background about 3D U-net and Spatio-Temporal Attention in my [blog](https://ycmove.github.io/posts/2024-08-19-3d-u-net-in-video-diffusion-models)
 
+
 ### Seeding the initial latent frame
-Check my [article](https://ycmove.github.io/posts/2024-08-22-trick-seeding-initial-frame){:target="_blank"} for more details.
+Check my [article](https://ycmove.github.io/posts/2024-08-22-trick-seeding-initial-frame) for more details.
 <table class="center">
   <tr>
     <th>FIFO-Diffusion</th>
@@ -47,7 +48,7 @@ Check my [article](https://ycmove.github.io/posts/2024-08-22-trick-seeding-initi
 
 
 ### Weighted Q-caches
-Check my [article](https://ycmove.github.io/posts/2024-08-24-trick-weighted-q-caches){:target="_blank"} for more details.
+Check my [article](https://ycmove.github.io/posts/2024-08-24-trick-weighted-q-caches) for more details.
 <table class="center">
   <tr>
     <th>FIFO-Diffusion</th>
@@ -70,7 +71,7 @@ Check my [article](https://ycmove.github.io/posts/2024-08-24-trick-weighted-q-ca
 
 
 ### Extending the Latent Uniformly
-Check my [article](https://ycmove.github.io/posts/2024-08-27-trick-uniform-latent){:target="_blank"} for more details.
+Check my [article](https://ycmove.github.io/posts/2024-08-27-trick-uniform-latent) for more details.
 <table class="center">
   <tr>
     <th>FIFO-Diffusion</th>
