@@ -520,7 +520,7 @@ class LatentDiffusion(DDPM):
     def decode_first_stage(self, z, **kwargs):
         return self.decode_core(z, **kwargs)
 
-    def apply_model(self, x_noisy, t, cond, **kwargs):
+    def apply_model(self, x_noisy, t, mode, cond, **kwargs):
         if isinstance(cond, dict):
             # hybrid case, cond is exptected to be a dict
             pass
@@ -530,7 +530,7 @@ class LatentDiffusion(DDPM):
             key = 'c_concat' if self.model.conditioning_key == 'concat' else 'c_crossattn'
             cond = {key: cond}
 
-        x_recon = self.model(x_noisy, t, **cond, **kwargs)
+        x_recon = self.model(x_noisy, t, mode, **cond, **kwargs)
 
         if isinstance(x_recon, tuple):
             return x_recon[0]
@@ -712,7 +712,7 @@ class DiffusionWrapper(pl.LightningModule):
         self.diffusion_model = instantiate_from_config(diff_model_config)
         self.conditioning_key = conditioning_key
 
-    def forward(self, x, t, c_concat: list = None, c_crossattn: list = None,
+    def forward(self, x, t, mode, c_concat: list = None, c_crossattn: list = None,
                 c_adm=None, s=None, mask=None, **kwargs):
         # temporal_context = fps is foNone
         if self.conditioning_key is None:
@@ -723,7 +723,7 @@ class DiffusionWrapper(pl.LightningModule):
         elif self.conditioning_key == 'crossattn':
             cc = torch.cat(c_crossattn, 1)
             # cc.shape = (1,93,1024)
-            out = self.diffusion_model(x, t, context=cc, **kwargs)
+            out = self.diffusion_model(x, t, mode, context=cc, **kwargs)
         elif self.conditioning_key == 'hybrid':
             ## it is just right [b,c,t,h,w]: concatenate in channel dim
             xc = torch.cat([x] + c_concat, dim=1)

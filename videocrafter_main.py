@@ -96,13 +96,13 @@ def main(args):
     ## -----------------------------------------------------------------
     assert os.path.exists(args.prompt_file), "Error: prompt file NOT Found!"
 
-    if mode == 't2v':
-        prompt_list = load_prompts(args.prompt_file)
-    elif mode in ['t2v_cohe', 't2v_cohe_ar']:
-        prompt_list = load_prompts(args.prompt_file)
-    else:
-        assert mode == 'i2v'
+    t2v_modes = ['t2v', 't2v_seed', 't2v_seed_ar', 't2v_TTqcache', 't2v_STqcache', 't2v_unilatent']
+
+    if mode == 'i2v':
         img_list, prompt_list = load_i2v_prompts(args.prompt_file)
+    else:
+        prompt_list = load_prompts(args.prompt_file)
+
 
     num_samples = len(prompt_list)
 
@@ -122,14 +122,7 @@ def main(args):
         prompts = [prompt]
         text_emb = model.get_learned_conditioning(prompts)
 
-        if mode == 't2v':
-            cond = {"c_crossattn": [text_emb], "fps": fps}
-
-        elif mode in ['t2v_cohe', 't2v_cohe_ar']:
-            cond = {"c_crossattn": [text_emb], "fps": fps}
-            
-        else:
-            assert mode == 'i2v'
+        if mode == 'i2v':
             ########### i2v ###########
             img_path = img_list[idx]
             cond_images = load_image_batch([img_path], (args.height, args.width))
@@ -137,7 +130,9 @@ def main(args):
             img_emb = model.get_image_embeds(cond_images)
             imtext_cond = torch.cat([text_emb, img_emb], dim=1)
             cond = {"c_crossattn": [imtext_cond], "fps": fps}
-            ############################
+            
+        else:
+            cond = {"c_crossattn": [text_emb], "fps": fps}
 
         ## inference
         is_run_base = not (os.path.exists(latents_dir+f"/{args.num_inference_steps}.pt") and os.path.exists(latents_dir+f"/0.pt"))
@@ -145,7 +140,7 @@ def main(args):
             ddim_sampler = DDIMSampler(model)
             ddim_sampler.make_schedule(ddim_num_steps=args.num_inference_steps, ddim_eta=args.eta, verbose=False)
         else:
-            base_tensor, ddim_sampler, _ = base_ddim_sampling(model, cond, noise_shape, \
+            base_tensor, ddim_sampler, _ = base_ddim_sampling(model, cond, args.mode, noise_shape, \
                                                 args.num_inference_steps, args.eta, args.unconditional_guidance_scale, \
                                                 latents_dir=latents_dir)
             save_gif(base_tensor, output_dir, "origin")

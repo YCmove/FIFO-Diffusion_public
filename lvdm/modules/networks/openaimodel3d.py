@@ -36,30 +36,49 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
     support it as an extra input.
     """
 
-    def forward(self, x, emb, context=None, batch_size=None, caches=None):
-        q1 = None
-        q2 = None
+    def forward(self, x, emb, mode, context=None, batch_size=None, caches=(None, None)):
+        q_dic = {
+            "st_q1": None,
+            "st_q2": None,
+            "tt_q1": None,
+            "tt_q2": None
+        }
         for i, layer in enumerate(self):
             logging.info(f'--- Start {i}-timestep in TimestepEmbedSequential ---')
             logging.info(f'input x={x.shape}')
+
             if isinstance(layer, TimestepBlock):
-                # ResBlock, convolutional layers
-                logging.info(f'[Conv2D with emb] {layer},\nemb={emb.shape}')
+                logging.info(f'[Conv2D with emb]\nemb={emb.shape}')
                 x = layer(x, emb, batch_size)
+
             elif isinstance(layer, SpatialTransformer):
-                logging.info(f'[SpatialTransformer] {layer},\ncontext={context.shape}')
-                x = layer(x, context, None)
+                logging.info(f'[SpatialTransformer]\ncontext={context.shape}')
+                if 'STqcache' in mode:
+                    x, q1, q2 = layer(x, context, mode, caches)
+                    q_dic['st_q1'] = q1
+                    q_dic['st_q2'] = q2
+                else:
+                    x, _, _  = layer(x, context, mode, caches=(None, None))
+
             elif isinstance(layer, TemporalTransformer):
                 x = rearrange(x, '(b f) c h w -> b c f h w', b=batch_size)
-                logging.info(f'[TemporalTransformer] {layer}\ninput x={x.shape},\ncontext={context.shape}')
-                x, q1, q2 = layer(x, context, caches)
+                logging.info(f'[TemporalTransformer]\ninput x={x.shape},\ncontext={context.shape}')
+                if 'TTqcache' in mode:
+                    x, q1, q2 = layer(x, context, mode, caches)
+                    q_dic['tt_q1'] = q1
+                    q_dic['tt_q2'] = q2
+                else:
+                    x, _, _ = layer(x, context, mode, caches=(None, None))
                 x = rearrange(x, 'b c f h w -> (b f) c h w')
+
             else:
-                logging.info(f'[Conv2D with just x] {layer}')
+                logging.info(f'[Conv2D with just x]')
                 x = layer(x,)
+
             logging.info(f'output x={x.shape}')
             logging.info(f'--- End of {i}-timestep in TimestepEmbedSequential ---')
-        return x, q1, q2
+
+        return x, q_dic
 
 
 class Downsample(nn.Module):
@@ -574,7 +593,7 @@ class UNetModel(nn.Module):
         return mask_all, attn_list
 
 
-    def forward(self, x, timesteps, context=None, features_adapter=None, fps=16, **kwargs):
+    def forward(self, x, timesteps, mode, context=None, features_adapter=None, fps=16, **kwargs):
         is_fifo = x.shape[0] != timesteps.shape[0]
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
 
@@ -601,8 +620,15 @@ class UNetModel(nn.Module):
         h = x.type(self.dtype)
         adapter_idx = 0
         hs = []
-        cache1 = []
-        cache2 = []
+        # cache1 = []
+        # cache2 = []
+        cache_dic = {
+            'st_q1': [],
+            'st_q2': [],
+            'tt_q1': [],
+            'tt_q2': []
+            }
+    
         out2in = {
             0: None,
             1: None,
@@ -615,55 +641,71 @@ class UNetModel(nn.Module):
             8: 4,
             9: 2,
             10: 1,
-            11: None
+            11: 1
         }
         # len(self.input_blocks) = 12
         for id, module in enumerate(self.input_blocks):
-            logging.info(f'------- start of {id}-th input_blocks {module.__class__.__name__}, h={h.shape} -------')
-            h, q1, q2 = module(h, emb, context=context, batch_size=b)
+            logging.info(f'############## start of {id}-th input_blocks {module.__class__.__name__}, h={h.shape} ##############')
+            h, layer_cache_dic = module(h, emb, mode, context=context, batch_size=b)
             if id ==0 and self.addition_attention:
-                logging.info(f'------- start of init_attention h={h.shape} -------')
-                h, q1, q2 = self.init_attn(h, emb, context=context, batch_size=b)
-                logging.info(f'------- end of init_attention h={h.shape} -------')
+                logging.info(f'------ start of init_attention h={h.shape} ------')
+                # no layer_cache_dic will in 0-th init
+                h, _ = self.init_attn(h, emb, mode=mode, context=context, batch_size=b)
+                logging.info(f'------ end of init_attention h={h.shape} ------')
             ## plug-in adapter features
             if ((id+1)%3 == 0) and features_adapter is not None:
                 # never executed
                 h = h + features_adapter[adapter_idx]
                 adapter_idx += 1
 
-            # here
-            # del q1, q2
-            cache1.append(q1)
-            cache2.append(q2)
+            if ('TTqcache' in mode or 'STqcache' in mode):
+                cache_dic['st_q1'].append(layer_cache_dic['st_q1'])
+                cache_dic['st_q2'].append(layer_cache_dic['st_q2'])
+                cache_dic['tt_q1'].append(layer_cache_dic['tt_q1'])
+                cache_dic['tt_q2'].append(layer_cache_dic['tt_q2'])
+                # cache1.append(q1)
+                # cache2.append(q2)
+
+            # print(f'input {id}-th h={h.shape}')
             hs.append(h)
+            logging.info(f'##############   end of {id}-th input_blocks {module.__class__.__name__}, h={h.shape} ##############')
+
         if features_adapter is not None:
             assert len(features_adapter)==adapter_idx, 'Wrong features_adapter'
 
-            logging.info(f'------- end of {id}-th input_blocks {module.__class__.__name__}, h={h.shape} -------')
 
-        logging.info(f'----- start of middle_block {module.__class__.__name__}, h={h.shape} -----')
-        h, _, _ = self.middle_block(h, emb, context=context, batch_size=b)
-        logging.info(f'----- end of middle_block {module.__class__.__name__}, h={h.shape} -----')
+        logging.info(f'############## start of middle_block {module.__class__.__name__}, h={h.shape} ##############')
+        h, _ = self.middle_block(h, emb, mode=mode, context=context, batch_size=b)
+        logging.info(f'##############   end of middle_block {module.__class__.__name__}, h={h.shape} ##############')
 
-        # here
-        # mask1_all, mask1_list = self.avg_and_thresholding(cache1)
-        # mask2_all, mask2_list = self.avg_and_thresholding(cache2)
-        qcache_weights = list(np.linspace(0.8, 0.9, num=10))
 
         for idx, module in enumerate(self.output_blocks):
-            logging.info(f'----- start of {idx}-th output_blocks {module.__class__.__name__}, h={h.shape} -----')
-
+            logging.info(f'############## start of {idx}-th output_blocks {module.__class__.__name__}, h={h.shape} ##############')
+            
             h = torch.cat([h, hs.pop()], dim=1)
 
-            caches = None
-            # caches = ([1], [1])
-            # here
-            if out2in[idx] is not None:
-                caches = (cache1[out2in[idx]], 0), (cache2[out2in[idx]], qcache_weights.pop())
-                # caches = (mask1_list[out2in[idx]], mask2_list[out2in[idx]])
-                # caches = (mask1_all, mask2_all)
-            h, q1, q2 = module(h, emb, context=context, batch_size=b, caches=caches)
-            logging.info(f'----- end of {idx}-th output_blocks {module.__class__.__name__}, h={h.shape} -----')
+            caches = (None, None)
+            inlayer_idx = out2in[idx]
+
+            # In attention.py q = (1-vt) * q + vt * q_cache
+            # 1 - vt is the weighted qcache
+            vt = 1.0
+
+            if mode not in ['t2v', 'i2v']:
+                if inlayer_idx is not None:
+                    if 'STqcache' in mode and 'attn1' in mode:
+                        caches = (cache_dic['st_q1'][inlayer_idx], vt), (None, None)
+                    elif 'STqcache' in mode and 'attn2' in mode:
+                        caches = (None, None), (cache_dic['st_q2'][inlayer_idx], vt)
+                    elif 'TTqcache' in mode and 'attn1' in mode:
+                        caches = (cache_dic['tt_q1'][inlayer_idx], vt), (None, None)
+                    elif 'TTqcache' in mode and 'attn2' in mode:
+                        caches = (None, None), (cache_dic['tt_q2'][inlayer_idx], vt)
+                    # else:
+                    #     print('No specified attn')
+            
+            h, _ = module(h, emb, mode, context=context, batch_size=b, caches=caches)
+            logging.info(f'##############   end of {idx}-th output_blocks {module.__class__.__name__}, h={h.shape} ##############')
 
         h = h.type(x.dtype)
         y = self.out(h)

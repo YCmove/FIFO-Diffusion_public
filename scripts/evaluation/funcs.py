@@ -27,19 +27,35 @@ def prepare_latents(args, latents_dir, sampler):
             latents_list.append(latents)
 
     # latents_list: [8,..,63] with increased noise level
-    for i in range(args.num_inference_steps):
-        alpha = sampler.ddim_alphas[i] # image -> noise
-        beta = 1 - alpha
-        frame_idx = max(0, i-(args.num_inference_steps - args.video_length))
-        latents = (alpha)**(0.5) * video[:,:,[frame_idx]] + (1-alpha)**(0.5) * torch.randn_like(video[:,:,[frame_idx]])
-        latents_list.append(latents)
+    if 'unilatent' in args.mode:
+
+        base_to_latent = args.num_inference_steps // args.video_length
+        frame_idx = 0
+        for i in range(args.num_inference_steps):
+            alpha = sampler.ddim_alphas[i] # image -> noise
+            beta = 1 - alpha
+
+            if i != 0 and i % base_to_latent == 0:
+                frame_idx += 1
+            
+            latents = (alpha)**(0.5) * video[:,:,[frame_idx]] + beta**(0.5) * torch.randn_like(video[:,:,[frame_idx]])
+            latents_list.append(latents)
+
+    else:
+        for i in range(args.num_inference_steps):
+            alpha = sampler.ddim_alphas[i] # image -> noise
+            beta = 1 - alpha
+            frame_idx = max(0, i-(args.num_inference_steps - args.video_length))
+
+            latents = (alpha)**(0.5) * video[:,:,[frame_idx]] + beta**(0.5) * torch.randn_like(video[:,:,[frame_idx]])
+            latents_list.append(latents)
 
     latents = torch.cat(latents_list, dim=2)
 
     return latents
 
 
-def shift_latents(latents):
+def shift_latents(latents, prev_clean_latent):
     # shift latents
     latents[:,:,:-1] = latents[:,:,1:].clone()
 
@@ -106,7 +122,7 @@ def batch_ddim_sampling(model, cond, noise_shape, n_samples=1, ddim_steps=50, dd
     batch_variants = torch.stack(batch_variants, dim=1) # b,n,c,f,h,w
     return batch_variants
 
-def base_ddim_sampling(model, cond, noise_shape, ddim_steps=50, ddim_eta=1.0,\
+def base_ddim_sampling(model, cond, mode, noise_shape, ddim_steps=50, ddim_eta=1.0,\
                         cfg_scale=1.0, temporal_cfg_scale=None, latents_dir=None, **kwargs):
     ddim_sampler = DDIMSampler(model)
     uncond_type = model.uncond_type
@@ -142,6 +158,7 @@ def base_ddim_sampling(model, cond, noise_shape, ddim_steps=50, ddim_eta=1.0,\
         kwargs.update({"clean_cond": True})
         samples, _ = ddim_sampler.sample(S=ddim_steps,
                                         conditioning=cond,
+                                        mode=mode,
                                         batch_size=noise_shape[0],
                                         shape=noise_shape[1:],
                                         verbose=True,
@@ -161,9 +178,10 @@ def base_ddim_sampling(model, cond, noise_shape, ddim_steps=50, ddim_eta=1.0,\
     return batch_images, ddim_sampler, samples
 
 
-def update_c_crossattn(model, frame16, cond):
-    frame_tensor = model.decode_first_stage_2DAE(frame16)
-    first_ref_img_emb = model.get_image_embeds(frame_tensor[:,:,0,:,:])
+def update_c_crossattn(model, frame1, cond):
+    frame_tensor = model.decode_first_stage_2DAE(frame1)
+    frame_tensor = torch.squeeze(frame_tensor, dim=2)
+    first_ref_img_emb = model.get_image_embeds(frame_tensor)
     cond['c_crossattn'] = [torch.cat([cond['c_crossattn'][0], first_ref_img_emb], dim=1)]
 
     return cond
@@ -193,7 +211,7 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
     ## construct unconditional guidance
     if cfg_scale != 1.0:
         if uncond_type == "empty_seq":
-            # i2v and t2v_cohe
+            # i2v and t2v_seed
             prompts = batch_size * [""]
             #prompts = N * T * [""]  ## if is_imgbatch=True
             uc_emb = model.get_learned_conditioning(prompts)
@@ -210,12 +228,6 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
             ## img: b c h w >> b l c
             uc_img = model.get_image_embeds(uc_img) # uc_img = (1, 3, 24, 24) -> (1, 16, 1024)
             uc_emb = torch.cat([uc_emb, uc_img], dim=1)
-        
-        # if args.mode == 't2v_cohe':
-        #     cond = model.get_image_embeds(frame_tensor)
-        #     uc_img = model.get_image_embeds(uc_img)
-        #     cond.update({'c_crossattn': [uc_emb]})
-        #     pass
 
         # for both i2v and t2v
         if isinstance(cond, dict):
@@ -224,14 +236,15 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
 
     else:
         uc = None
+
     
     latents = prepare_latents(args, latents_dir, ddim_sampler)
 
     logging.info(f'Init latents = {latents.shape}')
 
-    # t2v_cohe and t2v_cohe_ar
-    if args.mode in ['t2v_cohe', 't2v_cohe_ar']:
-        cond = update_c_crossattn(model, latents[:,:,0:16], cond)
+    # t2v_seed and t2v_seed_ar
+    if args.mode in ['t2v_seed', 't2v_seed_ar']:
+        cond = update_c_crossattn(model, latents[:,:,[0],:], cond)
 
 
     num_frames_per_gpu = args.video_length
@@ -247,8 +260,8 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
     if args.lookahead_denoising:
         timesteps = np.concatenate([np.full((args.video_length//2,), timesteps[0]), timesteps])
         indices = np.concatenate([np.full((args.video_length//2,), 0), indices])
-    for i in trange(args.new_video_length + args.num_inference_steps - args.video_length, desc="fifo sampling"):
 
+    for i in trange(args.new_video_length + args.num_inference_steps - args.video_length, desc="fifo sampling"):
 
         for rank in reversed(range(2 * args.num_partitions if args.lookahead_denoising else args.num_partitions)):
             start_idx = rank*(num_frames_per_gpu // 2) if args.lookahead_denoising else rank*num_frames_per_gpu
@@ -265,6 +278,7 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
             output_latents, _ = ddim_sampler.fifo_onestep(
                                             cond=cond,
                                             shape=noise_shape,
+                                            mode=args.mode,
                                             latents=input_latents,
                                             timesteps=t,
                                             indices=idx,
@@ -278,36 +292,30 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
                 latents[:,:,midpoint_idx:end_idx] = output_latents[:,:,-(num_frames_per_gpu//2):]
             else:
                 latents[:,:,start_idx:end_idx] = output_latents
+
             del output_latents
         
-
-
-        # reconstruct from latent to pixel space
-        first_frame_idx = args.video_length // 2 if args.lookahead_denoising else 0
-        frame_tensor = model.decode_first_stage_2DAE(latents[:,:,[first_frame_idx]]) # b,c,1,H,W
-        # latents[:,:,[first_frame_idx]] = (1, 4, 1, 40, 64)
-        # frame_tensor = (1, 3, 1, 320, 512)
         
 
+
+        # # reconstruct from latent to pixel space
+        first_frame_idx = args.video_length // 2 if args.lookahead_denoising else 0
+        frame_tensor = model.decode_first_stage_2DAE(latents[:,:,[first_frame_idx]]) # b,c,1,H,W
         if save_frames:
-            for j in range(args.video_length):
+            for j in range(latents.shape[2]):
                 frame_tensor_tmp = model.decode_first_stage_2DAE(latents[:,:,[j]])
                 image_tmp = tensor2image(frame_tensor_tmp)
                 fifo_path_tmp = os.path.join(fifo_dir, f"{i}_{j}.png")
                 image_tmp.save(fifo_path_tmp)
 
         image = tensor2image(frame_tensor)
-        # plt.imshow(image)
-        # plt.show()
-        # if save_frames:
-        #     fifo_path = os.path.join(fifo_dir, f"{i}.png")
-        #     image.save(fifo_path)
+
         fifo_video_frames.append(image)
             
-        latents = shift_latents(latents)
+        latents = shift_latents(latents, latents[:,:,[first_frame_idx]].clone())
 
         # In auto-regressive manner
-        if args.mode == 't2v_cohe_ar':
+        if args.mode == 't2v_seed_ar':
             # Update cond based on last newly generated frame
             cond = update_c_crossattn(model, latents[:,:,0:8].clone(), cond)
 

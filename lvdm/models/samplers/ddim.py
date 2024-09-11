@@ -61,6 +61,7 @@ class DDIMSampler(object):
     @torch.no_grad()
     def sample(self,
                S,
+               mode,
                batch_size,
                shape,
                conditioning=None,
@@ -111,7 +112,7 @@ class DDIMSampler(object):
             size = (batch_size, C, T, H, W)
         # print(f'Data shape for DDIM sampling is {size}, eta {eta}')
         
-        samples, intermediates = self.ddim_sampling(conditioning, size,
+        samples, intermediates = self.ddim_sampling(conditioning, mode, size,
                                                     callback=callback,
                                                     img_callback=img_callback,
                                                     quantize_denoised=quantize_x0,
@@ -131,7 +132,7 @@ class DDIMSampler(object):
         return samples, intermediates
 
     @torch.no_grad()
-    def ddim_sampling(self, cond, shape,
+    def ddim_sampling(self, cond, mode, shape,
                       x_T=None, ddim_use_original_steps=False,
                       callback=None, timesteps=None, quantize_denoised=False,
                       mask=None, x0=None, img_callback=None, log_every_t=100,
@@ -167,7 +168,7 @@ class DDIMSampler(object):
                 torch.save(img, f"{latents_dir}/{i}.pt")
             index = total_steps - i - 1
             ts = torch.full((b,), step, device=device, dtype=torch.long) # [1]
-            outs = self.p_sample_ddim(img, cond, ts, index=index, use_original_steps=ddim_use_original_steps,
+            outs = self.p_sample_ddim(img, cond, ts, mode, index=index, use_original_steps=ddim_use_original_steps,
                                       quantize_denoised=quantize_denoised, temperature=temperature,
                                       noise_dropout=noise_dropout, score_corrector=score_corrector,
                                       corrector_kwargs=corrector_kwargs,
@@ -183,7 +184,7 @@ class DDIMSampler(object):
         return img, intermediates
 
     @torch.no_grad()
-    def fifo_onestep(self, cond, shape, latents=None, timesteps=None, indices=None,
+    def fifo_onestep(self, cond, shape, mode, latents=None, timesteps=None, indices=None,
                      unconditional_guidance_scale=1., unconditional_conditioning=None,
                      **kwargs):
         device = self.model.betas.device        
@@ -191,7 +192,7 @@ class DDIMSampler(object):
 
         ts = torch.Tensor(timesteps.copy()).to(device=device, dtype=torch.long) # [16]
 
-        noise_pred = self.unet(latents, cond, ts,
+        noise_pred = self.unet(latents, cond, ts, mode,
                                 unconditional_guidance_scale=unconditional_guidance_scale,
                                 unconditional_conditioning=unconditional_conditioning,
                                 **kwargs)
@@ -201,7 +202,7 @@ class DDIMSampler(object):
         return latents, pred_x0
 
     @torch.no_grad()
-    def p_sample_ddim(self, x, c, t, index, repeat_noise=False, use_original_steps=False, quantize_denoised=False,
+    def p_sample_ddim(self, x, c, t, mode, index, repeat_noise=False, use_original_steps=False, quantize_denoised=False,
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
                       unconditional_guidance_scale=1., unconditional_conditioning=None,
                       uc_type=None, conditional_guidance_scale_temporal=None, **kwargs):
@@ -211,15 +212,15 @@ class DDIMSampler(object):
         else:
             is_video = False
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
-            e_t = self.model.apply_model(x, t, c, **kwargs) # unet denoiser
+            e_t = self.model.apply_model(x, t, mode, c, **kwargs) # unet denoiser
         else:
             # with unconditional condition
             if isinstance(c, torch.Tensor):
-                e_t = self.model.apply_model(x, t, c, **kwargs)
+                e_t = self.model.apply_model(x, t, mode, c, **kwargs)
                 e_t_uncond = self.model.apply_model(x, t, unconditional_conditioning, **kwargs)
             elif isinstance(c, dict):
-                e_t = self.model.apply_model(x, t, c, **kwargs)
-                e_t_uncond = self.model.apply_model(x, t, unconditional_conditioning, **kwargs)
+                e_t = self.model.apply_model(x, t, mode, c, **kwargs)
+                e_t_uncond = self.model.apply_model(x, t, mode, unconditional_conditioning, **kwargs)
             else:
                 raise NotImplementedError
             # text cfg
@@ -234,8 +235,8 @@ class DDIMSampler(object):
                     raise NotImplementedError
             # temporal guidance
             if conditional_guidance_scale_temporal is not None:
-                e_t_temporal = self.model.apply_model(x, t, c, **kwargs)
-                e_t_image = self.model.apply_model(x, t, c, no_temporal_attn=True, **kwargs)
+                e_t_temporal = self.model.apply_model(x, t, mode, c, **kwargs)
+                e_t_image = self.model.apply_model(x, t, mode, c, no_temporal_attn=True, **kwargs)
                 e_t = e_t + conditional_guidance_scale_temporal * (e_t_temporal - e_t_image)
 
         if score_corrector is not None:
@@ -282,17 +283,17 @@ class DDIMSampler(object):
         return x_prev, pred_x0
     
     @torch.no_grad()
-    def unet(self, x, c, t, unconditional_guidance_scale=1.,
+    def unet(self, x, c, t, mode, unconditional_guidance_scale=1.,
              unconditional_conditioning=None, **kwargs):
         
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
-            e_t = self.model.apply_model(x, t, c, **kwargs) # unet denoiser
+            e_t = self.model.apply_model(x, t, mode, c, **kwargs) # unet denoiser
         else:
             # i2v: c.c_crossattn = embed image (already add noise)
-            e_t = self.model.apply_model(x, t, c, **kwargs)
+            e_t = self.model.apply_model(x, t, mode, c, **kwargs)
 
             # i2v: unconditional_conditioning.c_crossattn = random noise
-            e_t_uncond = self.model.apply_model(x, t, unconditional_conditioning, **kwargs)
+            e_t_uncond = self.model.apply_model(x, t, mode, unconditional_conditioning, **kwargs)
             
             # text cfg: classifier-free guidance
             e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
@@ -302,6 +303,8 @@ class DDIMSampler(object):
     @torch.no_grad()
     def ddim_step(self, sample, noise_pred, indices):
         b, _, f, *_, device = *sample.shape, sample.device
+        # Input
+        # latents, pred_x0 = self.ddim_step(latents, noise_pred, indices)
 
         alphas = self.ddim_alphas
         alphas_prev = self.ddim_alphas_prev
@@ -329,6 +332,7 @@ class DDIMSampler(object):
             noise = sigma_t * noise_like(x.shape, device)
 
             # DDIM paper eq. 12
+            # x_prev = a_prev.sqrt() * pred_x0 + dir_xt
             x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
             x_prevs.append(x_prev)
             pred_x0s.append(pred_x0)

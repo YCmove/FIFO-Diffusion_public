@@ -1,144 +1,191 @@
-## FIFO-Diffusion: Generating Infinite Videos from Text without Training
-<div align="center">
+## Improving Visual Consistency for Long Video Generation (FIFO-Diffusion + VideoCrafter)
 
-<p>
-💾 <b> VRAM < 10GB </b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-🚀 <b> Infinitely Long Videos</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-⭐️ <b> Tuning-free</b>
-</p>
+This series began with a perplexing body-flipped video ... see more in this [article](https://ycmove.github.io/2024/08/20/improving-visual-consistency.html).
 
-<a href="https://arxiv.org/abs/2405.11473"><img src='https://img.shields.io/badge/arXiv-red'></a> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-<a href="https://jjihwan.github.io/projects/FIFO-Diffusion"><img src='https://img.shields.io/badge/Project-Page-Green'></a>
-
-</div>
-
-## 📽️ See more video samples in our <a href="https://jjihwan.github.io/projects/FIFO-Diffusion"> project page</a>!
-<div align="center">
-
-<img src="https://github.com/jjihwan/FIFO-Diffusion_public/assets/63445348/aafafa52-5ddf-4093-9d29-681fe469e447">
-
-"An astronaut floating in space, high quality, 4K resolution.", 
-
-VideoCrafter2, 100 frames, 320 X 512 resolution
-
-<img src="assets/opensora_fifo.gif">
-
-"A corgi vlogging itself in tropical Maui."
-
-Open-Sora Plan, 512 X 512 resolution
+<table class="center">
+<thead>
+    <tr>
+        <th colspan="2">a person swimming in ocean, high quality, 4K resolution.</th>
+    </tr>
+</thead>
+<tbody>
+<tr>
+    <td colspan="2"><img src="https://ycmove.github.io/assets/imgs/a_person_swimming_in_ocean/85-95_fifo/body_flipping.gif"/></td>
+</tr>
+</tbody>
+</table>
 
 
-</div>
+## Features
+
+- Supporting of Image-to-Video(I2V) from VideoCrafter in FIFO-diffusion.
+- Improving Visual Consistency in the long video generation
+    1. **[Seeding the initial latent frame](#seeding-the-initial-latent-frame)** as the image embedding.
+    2. Use **[Weighted Q-caches](#weighted-q-caches)** in Spatio-Temporal Attention.
+    3. **[Extending the Latent Uniformly](#extending-the-latent-uniformly)** before the diagonal denoising.
+- More background about 3D U-net and Spatio-Temporal Attention in my [blog](https://ycmove.github.io/posts/2024-08-19-3d-u-net-in-video-diffusion-models)
+
+### Seeding the initial latent frame
+Check my [article](https://ycmove.github.io/posts/2024-08-22-trick-seeding-initial-frame){:target="_blank"} for more details.
+<table class="center">
+  <tr>
+    <th>FIFO-Diffusion</th>
+    <th>FIFO+<br>Initial Seeding</th>
+    <th>FIFO+<br>Initial Seeding<br>(Autoregressive)</th>
+  </tr>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_person_swimming_in_ocean/fifo_origin.gif"><img src=assets/readme/a_person_swimming_in_ocean/fifo_origin.gif ></td>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_person_swimming_in_ocean/fifo_origin.gif"><img src=assets/readme/a_person_swimming_in_ocean/t2v_cohe.gif></td>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_person_swimming_in_ocean/TTqcache_weighted.gif"><img src=assets/readme/a_person_swimming_in_ocean/t2v_cohe_ar.gif></td>
+  <tr><td style="text-align:center;" colspan="3">"a bicycle accelerating to gain speed, high quality, 4K resolution."</td>
+  </tr>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_bicycle_slowing_down_to_stop/fifo_origin.gif"><img src=assets/readme/a_bicycle_slowing_down_to_stop/fifo_origin.gif></td>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_bicycle_slowing_down_to_stop/t2v_cohe.gif"><img src=assets/readme/a_bicycle_slowing_down_to_stop/t2v_cohe.gif></td>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_bicycle_slowing_down_to_stop/t2v_cohe_ar.gif"><img src=assets/readme/a_bicycle_slowing_down_to_stop/t2v_cohe_ar.gif></td>
+  <tr><td style="text-align:center;" colspan="3">"a bicycle slowing down to stop, high quality, 4K resolution."</td>
+  </tr>
+</table>
 
 
-## News 📰
-**[2024.06.06]** 🔥🔥🔥 We are excited to release the code for **Open-Sora Plan v1.1.0**. Thanks to the authors for open-sourcing the awesome baseline!
+### Weighted Q-caches
+Check my [article](https://ycmove.github.io/posts/2024-08-24-trick-weighted-q-caches){:target="_blank"} for more details.
+<table class="center">
+  <tr>
+    <th>FIFO-Diffusion</th>
+    <th>FIFO+Q-caches</th>
 
-**[2024.05.25]** 🥳🥳🥳 We are thrilled to present our official PyTorch implementation for FIFO-Diffusion. We are releasing the code based on **VideoCrafter2**.
+  </tr>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_person_swimming_in_ocean/fifo_origin.gif"><img src=assets/readme/a_person_swimming_in_ocean/fifo_origin.gif ></td>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_person_swimming_in_ocean/TTqcache_weighted.gif"><img src=assets/readme/a_person_swimming_in_ocean/TTqcache_weighted.gif ></td>
+  <tr><td style="text-align:center;" colspan="2">"a person swimming in ocean, high quality, 4K resolution."</td>
+  </tr>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_boat_sailing_smoothly_on_a_calm_lake/fifo_origin.gif"><img src=assets/readme/a_boat_sailing_smoothly_on_a_calm_lake/fifo_origin.gif></td>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_boat_sailing_smoothly_on_a_calm_lake/TTqcache_weighted.gif"><img src=assets/readme/a_boat_sailing_smoothly_on_a_calm_lake/TTqcache_weighted.gif></td>
+  <tr><td style="text-align:center;" colspan="2">"a boat sailing smoothly on a calm lake, high quality, 4K resolution."</td>
+  </tr>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_bicycle_leaning_against_a_tree/fifo_origin.gif"><img src=assets/readme/a_bicycle_leaning_against_a_tree/fifo_origin.gif></td>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_bicycle_leaning_against_a_tree/TTqcache_weighted.gif"><img src=assets/readme/a_bicycle_leaning_against_a_tree/TTqcache_weighted.gif></td>
+  <tr><td style="text-align:center;" colspan="2">"a bicycle leaning against a tree, high quality, 4K resolution."</td>
+  </tr>
+</table>
 
-**[2024.05.19]** 🚀🚀🚀 Our paper, *FIFO-Diffusion: Generating Infinite Videos from Text without Training*, has been archived.
 
-## Clone our repository
+### Extending the Latent Uniformly
+Check my [article](https://ycmove.github.io/posts/2024-08-27-trick-uniform-latent){:target="_blank"} for more details.
+<table class="center">
+  <tr>
+    <th>FIFO-Diffusion</th>
+    <th>FIFO+<br>Uniform Latents</th>
+
+  </tr>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_bicycle_accelerating_to_gain_speed/fifo_origin.gif"><img src=assets/readme/a_bicycle_accelerating_to_gain_speed/fifo_origin.gif ></td>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_bicycle_accelerating_to_gain_speed/TTqcache_weighted.gif"><img src=assets/readme/a_bicycle_accelerating_to_gain_speed/unilatents_TTqcache_attn1_weighted90.gif ></td>
+  <tr><td style="text-align:center;" colspan="2">"a bicycle accelerating to gain speed, high quality, 4K resolution."</td>
+  </tr>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/unilatents_TTqcache_attn1_weighted90/fifo_origin.gif"><img src=assets/readme/a_car_stuck_in_traffic_during_rush_hour/fifo_origin.gif></td>
+  <td><a href="https://github.com/YCmove/FIFO-Diffusion_public/assets/readme/a_car_stuck_in_traffic_during_rush_hour/unilatents_TTqcache_attn1_weighted90.gif"><img src=assets/readme/a_car_stuck_in_traffic_during_rush_hour/unilatents_TTqcache_attn1_weighted90.gif></td>
+  <tr><td style="text-align:center;" colspan="2">"a car stuck in traffic during rush hour, high quality, 4K resolution."</td>
+  </tr>
+</table>
+
+## Installation
 ```
-git clone git@github.com:jjihwan/FIFO-Diffusion_public.git
-cd FIFO-Diffusion_public
-```
-
-## ☀️ Start with <a href="https://github.com/AILab-CVC/VideoCrafter">VideoCrafter</a>
-
-### 1. Environment Setup ⚙️ (python==3.10.14 recommended)
-```
-python3 -m venv .fifo
-source .fifo/bin/activate
-
+conda create --name fifoplus python=3.10.14
+conda activate fifoplus
 pip install -r requirements.txt
 ```
 
-### 2.1 Download the models from Hugging Face🤗
-|Model|Resolution|Checkpoint
-|:----|:---------|:---------
-|VideoCrafter2 (Text2Video)|320x512|[Hugging Face](https://huggingface.co/VideoCrafter/VideoCrafter2/blob/main/model.ckpt)
+## Downloading the Checkopoints
+|Model|Resolution|Checkpoint| Config
+|:----|:---------|:---------|:-------
+|VideoCrafter2 (Text2Video)|320x512|[Hugging Face](https://huggingface.co/VideoCrafter/VideoCrafter2/blob/main/model.ckpt)| [Link](https://github.com/AILab-CVC/VideoCrafter/blob/main/configs/inference_t2v_512_v2.0.yaml)
+|VideoCrafter1 (Image2Video)|320x512|[Hugging Face](https://huggingface.co/VideoCrafter/VideoCrafter2/blob/main/model.ckpt)| [Link](https://github.com/AILab-CVC/VideoCrafter/blob/main/configs/inference_i2v_512_v1.0.yaml)
 
-### 2.2 Set file structure
-Store them as following structure:
+Directory structure:
 ```
-cd FIFO-Diffusion_public
-    .
-    └── videocrafter_models
-        └── base_512_v2
-            └── model.ckpt      # VideoCrafter2 checkpoint
-```
-
-### 3.1. Run with VideoCrafter2 (Single GPU)
-Requires less than **9GB VRAM** with Titan XP.
-```
-python3 videocrafter_main.py --save_frames
+. FIFO-Diffusion_public
+    ├──configs
+    │     ├── inference_i2v_512_v1.0.yaml
+    │     └── inference_t2v_512_v2.0.yaml
+    ├──videocrafter_models
+    │     ├── base_512_v2
+    │     │        └── model.ckpt
+    │     └── Image2Video_512
+    ..             └── model.ckpt
 ```
 
-### 3.2. Distributed Parallel inference with VideoCrafter2 (Multiple GPUs)
-May consume slightly more memory than the single GPU inference (**11GB** with Titan XP).
-Please note that our implementation for parallel inference might not be optimal.
-Pull requests are welcome! 🤓
+## Usage
 
+### Prompts files
+For `t2v` and `t2v_seed`, the txt filw should look like
 ```
-python3 videocrafter_main_mp.py --num_gpus 8 --save_frames
+{prompt1}
+{prompt2}
+...
 ```
-
-### 3.3. Multi-prompt generation
-Comming soon.
-
-## ☀️ Start with <a href="https://github.com/PKU-YuanGroup/Open-Sora-Plan">Open-Sora Plan v1.1.0</a>
-For simple implementation, we use the DDPM scheduler for Open-Sora Plan v1.1.0.
-Since Open-Sora Plan recommends using the PNDM scheduler, the results might not show the optimal performance.
-Multi-processing (parallelizable inference) and adapting PNDM scheduler are our next plan.
-
-### 1. Environment Setup ⚙️ (python==3.10.14 recommended)
+Example:
 ```
-cd FIFO-Diffusion_public
-git clone git@github.com:PKU-YuanGroup/Open-Sora-Plan.git
-
-python -m venv .sora
-source .sora/bin/activate
-
-cd Open-Sora-Plan
-pip install -e .
-
-pip install deepspeed
+a person swimming in ocean, high quality, 4K resolution.
+a person giving a presentation to a room full of colleagues, high quality, 4K resolution.
 ```
 
-### 2. Run with Open-Sora Plan v1.1.0, 65x512x512 model
-Requires about 40GB VRAM with A6000.
-It uses *n=8* by default.
+For `i2v`
 ```
-sh scripts/opensora_fifo_65.sh
+{image_path_1};{prompt1}
+{image_path_22};{prompt2}
+...
 ```
-
-### 3. Run with Open-Sora Plan v1.1.0, 221x512x512 model
-Requires about 40GB VRAM with A6000.
-It uses *n=4* by default.
+Example:
 ```
-sh scripts/opensora_fifo_221.sh
+/data/vbench2/a large wave crashes over a rocky cliff.jpg;a large wave crashes over a rocky cliff, high quality, 4K resolution.
+/data/vbench2/A teddy bear is climbing over a wooden fence.jpg;A teddy bear is climbing over a wooden fence, high quality, 4K resolution.
 ```
 
-### 4. Distributed Parallel inference with Open-Sora Plan (WIP)
-Comming soon.
+### Argument `--mode {main_option}{sub_option}`
+  - Main options:
+    - `i2v`
+    - `t2v`
+    - `t2v_seed`: Seeding the initial latent frame
+  - Sub options:
+    - `TTqcache_attn1`: Enable Q-caches
+    - `unilatent`: Extending the Latent Uniformly
 
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=jjihwan/FIFO-Diffusion_public&type=Date)](https://star-history.com/#jjihwan/FIFO-Diffusion_public&Date)
-
-## 😆 Citation
+### Argument  `--experiment {experiment}`
+This will create a folder name `{experiment}` under the main directory and a `{experiment}.gif` (or mp4).
 ```
-@article{kim2024fifo,
-	title = {FIFO-Diffusion: Generating Infinite Videos from Text without Training},
-	author = {Jihwan Kim and Junoh Kang and Jinyoung Choi and Bohyung Han},
-	journal = {arXiv preprint arXiv:2405.11473},
-	year = {2024},
-}
+. FIFO-Diffusion_public
+    ├──results
+    ..  └── videocraft_v2_fifo
+              ├── latents # this stores the clean latent from base model
+              └── random_noise
+                    └── {prompt}
+                            └──{experiment}
 ```
 
 
-## 🤓 Acknowledgements
-Our codebase builds on [VideoCrafter](https://github.com/AILab-CVC/VideoCrafter), [Open-Sora Plan](https://github.com/PKU-YuanGroup/Open-Sora-Plan), [zeroscope](https://huggingface.co/cerspense/zeroscope_v2_576w). 
-Thanks to the authors for sharing their awesome codebases!
+### Inference command for main option `t2v`
+```
+python3 videocrafter_main.py \\
+--config configs/inference_t2v_512_v2.0.yaml \\
+--ckpt_path videocrafter_models/base_512_v2/model.ckpt \\
+--prompt_file prompts/vbench_t2v_subject_consistency_debug.csv \\
+--mode t2v_TTqcache_attn1_unilatent \\
+--save_frames \\
+--experiment t2v_TTqcache_attn1_unilatent
+```
+
+### Inference command for main option `i2v` and `t2v_seed`
+```
+python3 videocrafter_main.py \\
+--config configs/inference_i2v_512_v1.0.yaml \\
+--ckpt_path videocrafter_models/Image2Video_512/model.ckpt \\
+--prompt_file prompts/vbench_t2v_cohe_fromi2v.csv \\
+--mode t2v_seed_TTqcache \\
+--save_frames \\
+--experiment t2v_seed_TTqcache
+```
+
+
+
+## Acknowledgements
+This repo is a fork of [FIFO-Diffusion](https://github.com/jjihwan/FIFO-Diffusion_public?tab=readme-ov-file#-citation), using [VideoCrafter](https://github.com/AILab-CVC/VideoCrafter?tab=readme-ov-file#-citation) as the base model. The ideas are also inspired by [ConsiStory: Training-Free Consistent Text-to-Image Generation](https://arxiv.org/abs/2402.03286) and [Cross-Image Attention for Zero-Shot Appearance Transfer](https://arxiv.org/abs/2311.03335). Be sure to check out and cite their original publications. And I am open to any discussions on this work!
+
