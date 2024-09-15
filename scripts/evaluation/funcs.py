@@ -243,7 +243,7 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
     logging.info(f'Init latents = {latents.shape}')
 
     # t2v_seed and t2v_seed_ar
-    if args.mode in ['t2v_seed', 't2v_seed_ar']:
+    if 't2v_seed' in args.mode or 't2v_seed_ar':
         cond = update_c_crossattn(model, latents[:,:,[0],:], cond)
 
 
@@ -315,7 +315,7 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
         latents = shift_latents(latents, latents[:,:,[first_frame_idx]].clone())
 
         # In auto-regressive manner
-        if args.mode == 't2v_seed_ar':
+        if 't2v_seed_ar' in args.mode:
             # Update cond based on last newly generated frame
             cond = update_c_crossattn(model, latents[:,:,0:8].clone(), cond)
 
